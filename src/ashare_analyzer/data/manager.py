@@ -193,6 +193,38 @@ class DataManager:
 
         return None
 
+    async def get_financial_indicators(self, stock_code: str) -> dict[str, Any] | None:
+        """
+        获取财务指标数据
+
+        包含：ROE、ROA、净利率、毛利率、营收增长、股息率、历史PB等
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            财务指标字典或None
+        """
+        cache_key = f"financial:{stock_code}"
+
+        # 缓存1天（财务数据更新频率低）
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            logger.debug(f"[DataManager] Cache hit for financial indicators {stock_code}")
+            return cached
+
+        for fetcher in self._fetchers:
+            if hasattr(fetcher, "get_financial_indicators"):
+                indicators = await self._try_fetch(lambda f: f.get_financial_indicators(stock_code), fetcher)
+                if indicators:
+                    result = indicators.to_dict()
+                    self._cache.set(cache_key, result, ttl=86400)
+                    logger.debug(f"[DataManager] Got financial indicators for {stock_code} from {fetcher.name}")
+                    return result
+
+        logger.debug(f"[DataManager] No financial indicators available for {stock_code}")
+        return None
+
     async def get_stock_name(self, stock_code: str) -> str | None:
         cache_key = f"stock_name:{stock_code}"
 

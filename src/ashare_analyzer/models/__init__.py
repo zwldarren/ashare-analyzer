@@ -3,7 +3,7 @@ Data models for stock analyzer.
 """
 
 from ashare_analyzer.models.chip import ChipDistribution
-from ashare_analyzer.models.quotes import RealtimeSource, UnifiedRealtimeQuote
+from ashare_analyzer.models.quotes import FinancialIndicators, RealtimeSource, UnifiedRealtimeQuote
 from ashare_analyzer.models.results import (
     AnalysisResult,
     NewsFilterResponse,
@@ -26,4 +26,5 @@ __all__ = [
     "RealtimeSource",
     "UnifiedRealtimeQuote",
     "ChipDistribution",
+    "FinancialIndicators",
 ]

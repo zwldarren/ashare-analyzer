@@ -192,8 +192,16 @@ async def _build_analysis_context(
     if technical_indicators:
         context["technical_data"] = technical_indicators
 
+    # Fetch financial indicators once to avoid duplicate API calls
+    financial_indicators = None
+    if data_service and hasattr(data_service, "get_financial_indicators"):
+        try:
+            financial_indicators = await data_service.get_financial_indicators(stock_code)
+        except Exception as e:
+            logger.debug(f"[{stock_code}] 获取财务指标失败: {e}")
+
     valuation_result = await build_valuation_context(
-        realtime_quote, daily_data, current_price, data_service, stock_code
+        realtime_quote, daily_data, current_price, data_service, stock_code, financial_indicators
     )
     valuation_data, alt_quote = valuation_result
     if valuation_data:
@@ -215,9 +223,25 @@ async def _build_analysis_context(
                 context["realtime"]["name"] = stock_name
             logger.debug(f"[{stock_code}] 从备选数据源回填股票名称: {stock_name}")
 
-    financial_data = build_financial_context(realtime_quote, daily_data)
+    financial_data = await build_financial_context(realtime_quote, daily_data, data_service, stock_code)
     if financial_data:
         context["financial_data"] = financial_data
+
+        financial_fields_for_valuation = [
+            "roe",
+            "roa",
+            "net_margin",
+            "gross_margin",
+            "revenue_growth",
+            "earnings_growth",
+            "debt_to_equity",
+            "current_ratio",
+            "dividend_yield",
+            "historical_pb_median",
+        ]
+        for field in financial_fields_for_valuation:
+            if field in financial_data:
+                context["valuation_data"][field] = financial_data[field]
 
     growth_data = build_growth_context(daily_data, realtime_quote)
     if growth_data:

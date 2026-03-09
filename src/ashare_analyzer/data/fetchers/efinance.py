@@ -672,7 +672,7 @@ class EfinanceFetcher(BaseFetcher):
             return None
 
     async def get_enhanced_data(self, stock_code: str, days: int = 60) -> dict[str, Any]:
-        result = {
+        result: dict[str, Any] = {
             "code": stock_code,
             "daily_data": None,
             "realtime_quote": None,

@@ -101,3 +101,70 @@ class UnifiedRealtimeQuote:
     def has_volume_data(self) -> bool:
         """检查是否有量价数据"""
         return self.volume_ratio is not None or self.turnover_rate is not None
+
+
+@dataclass
+class FinancialIndicators:
+    """
+    财务指标数据结构
+
+    用于股票分类和基本面分析，包含盈利能力、成长性、财务健康等指标。
+
+    数据来源：
+    - akshare.stock_financial_analysis_indicator: ROE, ROA, 净利率等
+    - akshare.stock_a_lg_indicator: 股息率, 历史PB
+    """
+
+    code: str
+    source: RealtimeSource = RealtimeSource.FALLBACK
+
+    # 盈利能力
+    roe: float | None = None  # 净资产收益率 (%)
+    roa: float | None = None  # 总资产收益率 (%)
+    net_margin: float | None = None  # 销售净利率 (%)
+    gross_margin: float | None = None  # 销售毛利率 (%)
+
+    # 成长性
+    revenue_growth: float | None = None  # 营收增长率 (%)
+    earnings_growth: float | None = None  # 净利润增长率 (%)
+
+    # 财务健康
+    debt_ratio: float | None = None  # 资产负债率 (%)
+    current_ratio: float | None = None  # 流动比率
+
+    # 估值相关
+    dividend_yield: float | None = None  # 股息率 (%)
+
+    # 历史数据
+    historical_pb_median: float | None = None  # 历史PB中位数
+
+    def to_dict(self) -> dict[str, Any]:
+        """转换为字典（过滤 None 值）"""
+        result: dict[str, Any] = {
+            "code": self.code,
+            "source": self.source.value,
+        }
+        fields = [
+            ("roe", self.roe),
+            ("roa", self.roa),
+            ("net_margin", self.net_margin),
+            ("gross_margin", self.gross_margin),
+            ("revenue_growth", self.revenue_growth),
+            ("earnings_growth", self.earnings_growth),
+            ("debt_ratio", self.debt_ratio),
+            ("current_ratio", self.current_ratio),
+            ("dividend_yield", self.dividend_yield),
+            ("historical_pb_median", self.historical_pb_median),
+        ]
+        for key, value in fields:
+            if value is not None:
+                result[key] = value
+        return result
+
+    def has_profitability_data(self) -> bool:
+        """检查是否有盈利能力数据"""
+        return self.roe is not None or self.net_margin is not None
+
+    def has_growth_data(self) -> bool:
+        """检查是否有成长性数据"""
+        return self.revenue_growth is not None or self.earnings_growth is not None

@@ -373,6 +373,7 @@ async def build_valuation_context(
     current_price: float,
     data_service: Any,
     stock_code: str,
+    financial_indicators: dict | None = None,
 ) -> tuple[dict[str, Any], "UnifiedRealtimeQuote | None"]:
     """Build valuation context with PE/PB and industry comparison.
 
@@ -428,16 +429,39 @@ async def build_valuation_context(
     if pb_ratio > 0 and industry_pb > 0:
         valuation_data["pb_deviation_from_industry"] = round((pb_ratio - industry_pb) / industry_pb * 100, 2)
 
+    # Get historical PB median from financial indicators (use pre-fetched if available)
+    if financial_indicators and financial_indicators.get("historical_pb_median") is not None:
+        valuation_data["historical_pb_median"] = financial_indicators["historical_pb_median"]
+        logger.debug(f"[{stock_code}] 历史PB中位数: {financial_indicators['historical_pb_median']:.2f}")
+
     return valuation_data, alt_quote
 
 
-def build_financial_context(
+async def build_financial_context(
     realtime_quote: "UnifiedRealtimeQuote | None",
     daily_data: pd.DataFrame | None,
+    data_service: Any,
+    stock_code: str,
 ) -> dict[str, Any]:
-    """Build financial metrics context."""
+    """Build financial metrics context with complete data.
+
+    数据来源：
+    1. 实时行情: PE, PB
+    2. 日线数据: 波动率, 价格动量
+    3. 财务指标API: ROE, ROA, 净利率, 毛利率, 营收增长, 股息率等
+
+    Args:
+        realtime_quote: 实时行情数据
+        daily_data: 日线数据
+        data_service: 数据服务
+        stock_code: 股票代码
+
+    Returns:
+        财务指标字典
+    """
     financial_data: dict[str, Any] = {}
 
+    # 1. 从实时行情获取基础数据
     if realtime_quote:
         pe = realtime_quote.pe_ratio
         pb = realtime_quote.pb_ratio
@@ -446,6 +470,7 @@ def build_financial_context(
         if pb is not None:
             financial_data["pb_ratio"] = float(pb)
 
+    # 2. 计算波动率
     if daily_data is not None and not daily_data.empty and "close" in daily_data.columns:
         returns = daily_data["close"].pct_change().dropna()
         if len(returns) > 0:
@@ -456,6 +481,44 @@ def build_financial_context(
             current = daily_data["close"].iloc[-1]
             if price_20d_ago > 0:
                 financial_data["price_momentum_20d"] = round((current - price_20d_ago) / price_20d_ago * 100, 2)
+
+    # 3. 获取完整财务指标（新增）
+    if data_service and hasattr(data_service, "get_financial_indicators"):
+        try:
+            indicators = await data_service.get_financial_indicators(stock_code)
+            if indicators:
+                # 盈利能力
+                if indicators.get("roe") is not None:
+                    financial_data["roe"] = indicators["roe"]
+                if indicators.get("roa") is not None:
+                    financial_data["roa"] = indicators["roa"]
+                if indicators.get("net_margin") is not None:
+                    financial_data["net_margin"] = indicators["net_margin"]
+                if indicators.get("gross_margin") is not None:
+                    financial_data["gross_margin"] = indicators["gross_margin"]
+
+                # 成长性
+                if indicators.get("revenue_growth") is not None:
+                    financial_data["revenue_growth"] = indicators["revenue_growth"]
+                if indicators.get("earnings_growth") is not None:
+                    financial_data["earnings_growth"] = indicators["earnings_growth"]
+
+                # 财务健康
+                if indicators.get("debt_ratio") is not None:
+                    financial_data["debt_to_equity"] = indicators["debt_ratio"]
+                if indicators.get("current_ratio") is not None:
+                    financial_data["current_ratio"] = indicators["current_ratio"]
+
+                # 估值相关
+                if indicators.get("dividend_yield") is not None:
+                    financial_data["dividend_yield"] = indicators["dividend_yield"]
+
+                logger.debug(
+                    f"[{stock_code}] 财务指标: ROE={indicators.get('roe')}%, "
+                    f"营收增长={indicators.get('revenue_growth')}%"
+                )
+        except Exception as e:
+            logger.debug(f"[{stock_code}] 获取财务指标失败: {e}")
 
     return financial_data
 

@@ -40,7 +40,7 @@ from tenacity import (
 from ashare_analyzer.data.base import STANDARD_COLUMNS, USER_AGENTS, BaseFetcher
 from ashare_analyzer.exceptions import DataFetchError, RateLimitError
 from ashare_analyzer.infrastructure import AsyncRateLimiter, get_aiohttp_session
-from ashare_analyzer.models import ChipDistribution, RealtimeSource, UnifiedRealtimeQuote
+from ashare_analyzer.models import ChipDistribution, FinancialIndicators, RealtimeSource, UnifiedRealtimeQuote
 from ashare_analyzer.utils.stock_code import is_etf_code, is_hk_code, is_us_code
 
 from .realtime_types import get_realtime_circuit_breaker, safe_float, safe_int
@@ -940,8 +940,141 @@ class AkshareFetcher(BaseFetcher):
             logger.error(f"[API错误] 获取 {stock_code} 筹码分布失败: {e}")
             return None
 
+    async def get_financial_indicators(self, stock_code: str) -> FinancialIndicators | None:
+        """
+        获取财务指标数据
+
+        数据来源：
+        - stock_financial_abstract: ROE, ROA, 净利率, 毛利率, 营收增长, 资产负债率等
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            FinancialIndicators 或 None
+        """
+        import akshare as ak
+
+        if is_us_code(stock_code) or is_hk_code(stock_code) or is_etf_code(stock_code):
+            logger.debug(f"[API跳过] {stock_code} 非A股，跳过财务指标获取")
+            return None
+
+        indicators = FinancialIndicators(code=stock_code, source=RealtimeSource.AKSHARE_EM)
+
+        # 获取财务摘要数据
+        try:
+            self._set_random_user_agent()
+            await self._enforce_rate_limit()
+
+            logger.debug(f"[API调用] ak.stock_financial_abstract(symbol={stock_code}) 获取财务指标...")
+
+            def _call_financial_api():
+                return ak.stock_financial_abstract(symbol=stock_code)
+
+            df = await asyncio.to_thread(_call_financial_api)
+
+            if df is not None and not df.empty:
+                # 数据格式: 指标列为"指标", 日期为其他列，取最新一期数据
+                # 找到最新日期列（排除前两列）
+                date_cols = [col for col in df.columns if col not in ["选项", "指标"]]
+                if not date_cols:
+                    logger.warning(f"[财务指标] {stock_code} 无日期列")
+                    return indicators
+
+                latest_date = date_cols[0]  # 第一列是最新的
+
+                # 创建指标名称到值的映射
+                indicator_map = {
+                    "净资产收益率(ROE)": "roe",
+                    "总资产报酬率(ROA)": "roa",
+                    "销售净利率": "net_margin",
+                    "毛利率": "gross_margin",
+                    "营业总收入增长率": "revenue_growth",
+                    "归属母公司净利润增长率": "earnings_growth",
+                    "资产负债率": "debt_ratio",
+                    "流动比率": "current_ratio",
+                }
+
+                for _, row in df.iterrows():
+                    indicator_name = row.get("指标", "")
+                    if indicator_name in indicator_map:
+                        value = row.get(latest_date)
+                        if value is not None and pd.notna(value):
+                            field_name = indicator_map[indicator_name]
+                            try:
+                                # 值可能是数字或字符串
+                                if isinstance(value, str):
+                                    value = value.replace(",", "").replace("%", "").strip()
+                                    value = float(value)
+                                setattr(indicators, field_name, float(value))
+                            except (ValueError, TypeError):
+                                pass
+
+                logger.debug(
+                    f"[财务指标] {stock_code} ROE={indicators.roe}%, "
+                    f"净利率={indicators.net_margin}%, 营收增长={indicators.revenue_growth}%"
+                )
+
+        except Exception as e:
+            logger.warning(f"[财务指标] 获取 {stock_code} 财务指标失败: {e}")
+
+        # 尝试获取股息率和历史PB (可选，接口可能不可用)
+        try:
+            await self._enforce_rate_limit()
+
+            # Note: akshare dynamically loads modules, use getattr to avoid type errors
+            stock_a_lg_indicator = getattr(ak, "stock_a_lg_indicator", None)
+            if stock_a_lg_indicator is None:
+                logger.debug("[股息率] ak.stock_a_lg_indicator 接口不可用，跳过")
+                return indicators
+
+            logger.debug(f"[API调用] ak.stock_a_lg_indicator(stock={stock_code}) 获取股息率...")
+
+            def _call_lg_api():
+                return stock_a_lg_indicator(stock=stock_code)
+
+            df = await asyncio.to_thread(_call_lg_api)
+
+            if df is not None and not df.empty:
+                # 获取最新股息率
+                if "股息率" in df.columns:
+                    latest_dividend = df.iloc[-1]
+                    indicators.dividend_yield = self._parse_percent_value(latest_dividend.get("股息率"))
+
+                # 计算历史PB中位数
+                if "市净率" in df.columns:
+                    import numpy as np
+
+                    pb_values = pd.to_numeric(df["市净率"], errors="coerce").dropna()
+                    if len(pb_values) > 0:
+                        indicators.historical_pb_median = float(np.median(pb_values))
+                        logger.debug(
+                            f"[股息率] {stock_code} 股息率={indicators.dividend_yield}%, "
+                            f"历史PB中位数={indicators.historical_pb_median:.2f}"
+                        )
+
+        except Exception as e:
+            logger.debug(f"[股息率] 获取 {stock_code} 股息率/历史PB失败 (可忽略): {e}")
+
+        return indicators
+
+    def _parse_percent_value(self, value: Any) -> float | None:
+        """解析百分比值，处理字符串和数字格式"""
+        if value is None:
+            return None
+        try:
+            if isinstance(value, str):
+                # 处理 "12.34%" 或 "12.34" 格式
+                value = value.strip().rstrip("%")
+                return float(value)
+            elif isinstance(value, (int, float)):
+                return float(value)
+        except (ValueError, TypeError):
+            pass
+        return None
+
     async def get_enhanced_data(self, stock_code: str, days: int = 60) -> dict[str, Any]:
-        result = {
+        result: dict[str, Any] = {
             "code": stock_code,
             "daily_data": None,
             "realtime_quote": None,
