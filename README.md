@@ -26,6 +26,8 @@ An intelligent A-share stock analysis system powered by LLMs with multi-agent ar
 
 - **Scheduled Execution**: Run daily analysis automatically
 
+- **Flexible Configuration**: TOML config file with environment variable overrides
+
 ## Quick Start
 
 ### Prerequisites
@@ -47,12 +49,37 @@ pip install ashare-analyzer
 
 ### Configuration
 
-Create a `.env` file in your working directory (or use environment variables):
+Configuration can be done via TOML file or environment variables.
+
+**Configuration Priority** (lowest to highest):
+1. `~/.ashare-analyzer/config.toml` - Base configuration
+2. Environment variables / `.env` - Override TOML
+3. CLI arguments - Highest priority
+
+#### Option 1: TOML Config File (Recommended)
 
 ```bash
-# Copy example config (if you cloned the repo)
-cp .env.example .env
+# Create config directory
+mkdir -p ~/.ashare-analyzer
+
+# Copy example config
+cp config.example.toml ~/.ashare-analyzer/config.toml
+
+# Edit config
+vim ~/.ashare-analyzer/config.toml
 ```
+
+Minimal `config.toml`:
+
+```toml
+stock_list = ["600519", "300750"]
+
+[ai]
+llm_model = "deepseek/deepseek-reasoner"
+llm_api_key = "your_api_key_here"
+```
+
+#### Option 2: Environment Variables
 
 ```bash
 # Stock watchlist (comma-separated)
@@ -63,7 +90,7 @@ LLM_MODEL=deepseek/deepseek-reasoner
 LLM_API_KEY=your_api_key_here
 ```
 
-See [Configuration](#configuration-details) for all options.
+📖 **[Full Configuration Guide](docs/configuration.md)** - All config options with examples
 
 ### Usage
 
@@ -95,6 +122,8 @@ ashare-analyzer --help
 
 ## Configuration Details
 
+> 📖 **[Full Configuration Guide](docs/configuration.md)** - Complete reference with all options
+
 ### AI Model Configuration
 
 Supports 100+ providers via LiteLLM format:
@@ -111,49 +140,48 @@ Full provider list: [LiteLLM Providers](https://docs.litellm.ai/docs/providers)
 
 ### Notification Channels
 
-Configure one or more notification channels:
+Configure one or more notification channels in `config.toml`:
 
-```bash
+```toml
 # Discord
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+[notification.discord]
+webhook_url = "https://discord.com/api/webhooks/..."
 
 # Telegram
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
+[notification.telegram]
+bot_token = "your_bot_token"
+chat_id = "your_chat_id"
 
-# Email (SMTP)
-EMAIL_SMTP_HOST=smtp.gmail.com
-EMAIL_SMTP_PORT=587
-EMAIL_SMTP_USER=your_email@gmail.com
-EMAIL_SMTP_PASSWORD=your_app_password
-EMAIL_RECIPIENTS=recipient@example.com
+# Email
+[notification.email]
+sender = "your_email@gmail.com"
+password = "your_app_password"
+receivers = ["recipient@example.com"]
 ```
 
 ### Search Engines (for news)
 
-```bash
+```toml
+[search]
 # Tavily (recommended)
-TAVILY_API_KEY=your_tavily_key
+tavily_api_keys = ["your_tavily_key"]
+
+# Bocha (alternative)
+bocha_api_keys = ["key1", "key2"]
 
 # SerpAPI (alternative)
-SERPAPI_API_KEY=your_serpapi_key
+serpapi_api_keys = ["your_serpapi_key"]
 ```
 
 ### News Filter Configuration
 
 The news filter uses AI to filter out low-relevance and stale news results.
 
-| Environment Variable | Description | Default |
-|------------------|-------------|---------|
-| `NEWS_FILTER_ENABLED` | Enable/disable news filter | `true` |
-| `NEWS_FILTER_MIN_RESULTS` | Minimum results after filtering | `3` |
-| `NEWS_FILTER_MODEL` | LLM model for filtering (optional, falls back to LLM_MODEL) | - |
-
-Example:
-```bash
-NEWS_FILTER_ENABLED=true
-NEWS_FILTER_MIN_RESULTS=3
-NEWS_FILTER_MODEL=deepseek/deepseek-chat
+```toml
+[news_filter]
+enabled = true
+min_results = 3
+model = ""  # Optional, falls back to LLM_MODEL
 ```
 
 ## Development
@@ -170,9 +198,6 @@ ty check .
 
 # Run tests
 uv run pytest
-
-# Run tests with coverage
-uv run pytest --cov=ashare_analyzer
 ```
 
 ## Docker

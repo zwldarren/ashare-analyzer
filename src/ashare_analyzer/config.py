@@ -2,6 +2,7 @@
 
 import logging
 import os
+import tomllib
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -72,6 +73,131 @@ _COMMON_CONFIG = SettingsConfigDict(
     env_file_encoding="utf-8",
     extra="ignore",
 )
+
+TOML_TO_ENV_MAPPINGS: dict[tuple[str, ...], str] = {
+    ("ai", "llm_model"): "LLM_MODEL",
+    ("ai", "llm_api_key"): "LLM_API_KEY",
+    ("ai", "llm_base_url"): "LLM_BASE_URL",
+    ("ai", "llm_temperature"): "LLM_TEMPERATURE",
+    ("ai", "llm_max_tokens"): "LLM_MAX_TOKENS",
+    ("ai", "llm_request_delay"): "LLM_REQUEST_DELAY",
+    ("ai", "llm_max_retries"): "LLM_MAX_RETRIES",
+    ("ai", "llm_retry_delay"): "LLM_RETRY_DELAY",
+    ("ai", "llm_timeout"): "LLM_TIMEOUT",
+    ("ai", "fallback", "model"): "LLM_FALLBACK_MODEL",
+    ("ai", "fallback", "api_key"): "LLM_FALLBACK_API_KEY",
+    ("ai", "fallback", "base_url"): "LLM_FALLBACK_BASE_URL",
+    ("search", "bocha_api_keys"): "BOCHA_API_KEYS",
+    ("search", "tavily_api_keys"): "TAVILY_API_KEYS",
+    ("search", "brave_api_keys"): "BRAVE_API_KEYS",
+    ("search", "serpapi_api_keys"): "SERPAPI_API_KEYS",
+    ("search", "searxng_base_url"): "SEARXNG_BASE_URL",
+    ("search", "searxng_username"): "SEARXNG_USERNAME",
+    ("search", "searxng_password"): "SEARXNG_PASSWORD",
+    ("notification", "email", "sender"): "EMAIL_SENDER",
+    ("notification", "email", "sender_name"): "EMAIL_SENDER_NAME",
+    ("notification", "email", "password"): "EMAIL_PASSWORD",
+    ("notification", "email", "receivers"): "EMAIL_RECEIVERS",
+    ("notification", "telegram", "bot_token"): "TELEGRAM_BOT_TOKEN",
+    ("notification", "telegram", "chat_id"): "TELEGRAM_CHAT_ID",
+    ("notification", "telegram", "message_thread_id"): "TELEGRAM_MESSAGE_THREAD_ID",
+    ("notification", "discord", "webhook_url"): "DISCORD_WEBHOOK_URL",
+    ("notification", "webhook", "urls"): "CUSTOM_WEBHOOK_URLS",
+    ("notification", "webhook", "bearer_token"): "CUSTOM_WEBHOOK_BEARER_TOKEN",
+    ("system", "log_level"): "LOG_LEVEL",
+    ("system", "max_workers"): "MAX_WORKERS",
+    ("system", "debug"): "DEBUG",
+    ("system", "http_proxy"): "HTTP_PROXY",
+    ("system", "https_proxy"): "HTTPS_PROXY",
+    ("schedule", "enabled"): "SCHEDULE_ENABLED",
+    ("schedule", "time"): "SCHEDULE_TIME",
+    ("data_source", "tushare_token"): "TUSHARE_TOKEN",
+    ("data_source", "efinance_priority"): "EFINANCE_PRIORITY",
+    ("data_source", "akshare_priority"): "AKSHARE_PRIORITY",
+    ("data_source", "tushare_priority"): "TUSHARE_PRIORITY",
+    ("data_source", "baostock_priority"): "BAOSTOCK_PRIORITY",
+    ("data_source", "yfinance_priority"): "YFINANCE_PRIORITY",
+    ("data_source", "realtime_source_priority"): "REALTIME_SOURCE_PRIORITY",
+    ("news_filter", "enabled"): "NEWS_FILTER_ENABLED",
+    ("news_filter", "min_results"): "NEWS_FILTER_MIN_RESULTS",
+    ("news_filter", "model"): "NEWS_FILTER_MODEL",
+    ("stock_list",): "STOCK_LIST",
+}
+
+LIST_FIELDS: set[str] = {
+    "BOCHA_API_KEYS",
+    "TAVILY_API_KEYS",
+    "BRAVE_API_KEYS",
+    "SERPAPI_API_KEYS",
+    "EMAIL_RECEIVERS",
+    "CUSTOM_WEBHOOK_URLS",
+    "STOCK_LIST",
+}
+
+
+def _serialize_toml_value(value: Any, env_var: str) -> str:
+    """Convert a TOML value to environment variable string format."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list):
+        if env_var in LIST_FIELDS:
+            return ",".join(str(v) for v in value)
+        return str(value)
+    return str(value)
+
+
+def _get_nested_value(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    """Navigate nested dict using tuple of keys."""
+    current: Any = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _get_base_dir() -> str:
+    """Get base directory from environment variable or default."""
+    return os.environ.get("BASE_DIR") or str(Path.home() / ".ashare-analyzer")
+
+
+def _load_toml_config() -> dict[str, Any]:
+    """Load configuration from TOML file.
+
+    Returns empty dict if file doesn't exist.
+    Raises ConfigurationError with helpful message if file exists but is malformed.
+    """
+    config_path = Path(_get_base_dir()) / "config.toml"
+    if not config_path.exists():
+        return {}
+
+    try:
+        with open(config_path, "rb") as f:
+            return tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigurationError(
+            f"Failed to parse config file {config_path}: {e}\n"
+            f"Please check the TOML syntax. Common issues:\n"
+            f"  - Missing quotes around strings\n"
+            f"  - Unclosed brackets or quotes\n"
+            f"  - Invalid escape sequences"
+        ) from e
+    except OSError as e:
+        raise ConfigurationError(f"Failed to read config file {config_path}: {e}") from e
+
+
+def _flatten_toml_to_env(toml_config: dict[str, Any]) -> dict[str, str]:
+    """Convert nested TOML structure to flat environment variable format."""
+    env_map: dict[str, str] = {}
+
+    for toml_path, env_var in TOML_TO_ENV_MAPPINGS.items():
+        value = _get_nested_value(toml_config, toml_path)
+        if value is not None:
+            env_map[env_var] = _serialize_toml_value(value, env_var)
+
+    return env_map
 
 
 # ==========================================
@@ -259,21 +385,6 @@ class DataSourceConfig(BaseSettings):
 # ==========================================
 
 
-def _default_base_dir() -> str:
-    """Get default base directory for application data.
-
-    Priority:
-    1. BASE_DIR environment variable
-    2. ~/.ashare-analyzer (user home directory)
-
-    This allows PyPI-installed usage without needing a project directory.
-    """
-    env_base = os.environ.get("BASE_DIR")
-    if env_base:
-        return env_base
-    return str(Path.home() / ".ashare-analyzer")
-
-
 class Config(BaseSettings):
     """Main system configuration class.
 
@@ -281,8 +392,7 @@ class Config(BaseSettings):
     Supports .env files and nested configuration models.
     Each nested configuration class loads environment variables independently.
 
-    All runtime data (database, logs, reports) is stored under base_dir,
-    which defaults to ~/.ashare-analyzer for PyPI-installed usage.
+    All runtime data (database, logs, reports) is stored under ~/.ashare-analyzer.
     """
 
     model_config = SettingsConfigDict(
@@ -293,8 +403,8 @@ class Config(BaseSettings):
         env_parse_none_str="null",
     )
 
-    # Base directory for all runtime data (data, logs, reports)
-    base_dir: str = Field(default_factory=_default_base_dir, validation_alias="BASE_DIR")
+    # Base directory for all runtime data (only configurable via BASE_DIR env var)
+    base_dir: str = Field(default_factory=_get_base_dir, validation_alias="BASE_DIR")
 
     # Basic configuration
     stock_list_str: str = Field(default="", validation_alias="STOCK_LIST")
@@ -335,7 +445,7 @@ class Config(BaseSettings):
         return _parse_comma_list(self.stock_list_str)
 
     # ==========================================
-    # Derived paths from base_dir
+    # Derived paths
     # ==========================================
 
     @computed_field
@@ -416,13 +526,22 @@ class Config(BaseSettings):
 def get_config() -> Config:
     """Get cached configuration instance.
 
-    Loads configuration from environment variables and .env file.
-    Database configuration loading is handled separately in infrastructure layer.
+    Configuration loading priority:
+    1. config.toml (base configuration)
+    2. Environment variables / .env (overrides)
+    3. CLI arguments (handled separately in __main__.py)
 
     Returns:
         Config instance with all settings loaded.
     """
-    return Config()
+    toml_config = _load_toml_config()
+    toml_env = _flatten_toml_to_env(toml_config)
+
+    current_env = dict(os.environ)
+
+    merged_env = {**toml_env, **current_env}
+
+    return Config.model_validate(merged_env)
 
 
 def get_config_safe() -> tuple[Config | None, list[str]]:
@@ -433,10 +552,13 @@ def get_config_safe() -> tuple[Config | None, list[str]]:
     """
     errors = []
     try:
-        config = Config()
+        toml_config = _load_toml_config()
+        toml_env = _flatten_toml_to_env(toml_config)
+        current_env = dict(os.environ)
+        merged_env = {**toml_env, **current_env}
+        config = Config.model_validate(merged_env)
         return config, []
     except ValidationError as e:
-        # Configuration validation failed
         errors.append(f"配置加载失败: {e}")
         return None, errors
     except ConfigurationError as e:

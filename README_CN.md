@@ -26,6 +26,8 @@
 
 - **定时执行**：自动每日分析
 
+- **灵活配置**：支持 TOML 配置文件，环境变量可覆盖
+
 ## 快速开始
 
 ### 环境要求
@@ -47,7 +49,37 @@ pip install ashare-analyzer
 
 ### 配置
 
-在您的工作目录下创建 `.env` 文件（或使用环境变量）：
+支持 TOML 配置文件和环境变量两种配置方式。
+
+**配置优先级**（从低到高）：
+1. `~/.ashare-analyzer/config.toml` - 基础配置
+2. 环境变量 / `.env` - 覆盖 TOML
+3. 命令行参数 - 最高优先级
+
+#### 方式一：TOML 配置文件（推荐）
+
+```bash
+# 创建配置目录
+mkdir -p ~/.ashare-analyzer
+
+# 复制示例配置
+cp config.example.toml ~/.ashare-analyzer/config.toml
+
+# 编辑配置
+vim ~/.ashare-analyzer/config.toml
+```
+
+最小配置示例 `config.toml`：
+
+```toml
+stock_list = ["600519", "300750"]
+
+[ai]
+llm_model = "deepseek/deepseek-reasoner"
+llm_api_key = "your_api_key_here"
+```
+
+#### 方式二：环境变量
 
 ```bash
 # 自选股列表（逗号分隔）
@@ -58,7 +90,7 @@ LLM_MODEL=deepseek/deepseek-reasoner
 LLM_API_KEY=your_api_key_here
 ```
 
-完整配置选项见[配置详情](#配置详情)。
+📖 **[完整配置指南](docs/configuration.md)** - 所有配置项详解与示例
 
 ### 使用方法
 
@@ -90,6 +122,8 @@ ashare-analyzer --help
 
 ## 配置详情
 
+> 📖 **[完整配置指南](docs/configuration.md)** - 所有配置项详解与示例
+
 ### AI 模型配置
 
 通过 LiteLLM 格式支持 100+ 提供商：
@@ -106,59 +140,56 @@ ashare-analyzer --help
 
 ### 通知渠道
 
-配置一个或多个通知渠道：
+在 `config.toml` 中配置一个或多个通知渠道：
 
-```bash
+```toml
 # Discord
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+[notification.discord]
+webhook_url = "https://discord.com/api/webhooks/..."
 
 # Telegram
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
+[notification.telegram]
+bot_token = "your_bot_token"
+chat_id = "your_chat_id"
 
-# 邮件 (SMTP)
-EMAIL_SMTP_HOST=smtp.gmail.com
-EMAIL_SMTP_PORT=587
-EMAIL_SMTP_USER=your_email@gmail.com
-EMAIL_SMTP_PASSWORD=your_app_password
-EMAIL_RECIPIENTS=recipient@example.com
+# 邮件
+[notification.email]
+sender = "your_email@gmail.com"
+password = "your_app_password"
+receivers = ["recipient@example.com"]
 ```
 
 ### 搜索引擎（用于获取新闻）
 
-```bash
+```toml
+[search]
 # Tavily（推荐）
-TAVILY_API_KEY=your_tavily_key
+tavily_api_keys = ["your_tavily_key"]
+
+# 博查（备选）
+bocha_api_keys = ["key1", "key2"]
 
 # SerpAPI（备选）
-SERPAPI_API_KEY=your_serpapi_key
+serpapi_api_keys = ["your_serpapi_key"]
 ```
 
 ### 新闻过滤器配置
 
 新闻过滤器使用 AI 过滤掉低相关性和过时的新闻结果。
 
-| 环境变量 | 说明 | 默认值 |
-|----------|------|--------|
-| `NEWS_FILTER_ENABLED` | 启用/禁用新闻过滤器 | `true` |
-| `NEWS_FILTER_MIN_RESULTS` | 过滤后的最小结果数 | `3` |
-| `NEWS_FILTER_MODEL` | 用于过滤的 LLM 模型（可选，不配置则使用 LLM_MODEL） | - |
-
-示例：
-```bash
-NEWS_FILTER_ENABLED=true
-NEWS_FILTER_MIN_RESULTS=3
-NEWS_FILTER_MODEL=deepseek/deepseek-chat
+```toml
+[news_filter]
+enabled = true
+min_results = 3
+model = ""  # 可选，不配置则使用 LLM_MODEL
 ```
 
 ### 定时任务配置
 
-```bash
-# 启用定时任务
-SCHEDULE_ENABLED=true
-
-# 执行时间（24小时制，默认 18:00）
-SCHEDULE_TIME=18:00
+```toml
+[schedule]
+enabled = true
+time = "18:00"  # 24小时制
 ```
 
 ## 开发
@@ -175,9 +206,6 @@ ty check .
 
 # 运行测试
 uv run pytest
-
-# 运行测试并生成覆盖率报告
-uv run pytest --cov=ashare_analyzer
 ```
 
 ## Docker 部署
