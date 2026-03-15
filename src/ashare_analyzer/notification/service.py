@@ -13,10 +13,10 @@ from ashare_analyzer.config import get_config
 from ashare_analyzer.exceptions import NotificationError
 from ashare_analyzer.models import AnalysisResult
 from ashare_analyzer.notification.context import MessageContext
+from ashare_analyzer.output import get_output_formatter
 
 from .base import ChannelDetector, NotificationChannel
 from .email import EmailChannel
-from .report_generator import ReportGenerator
 from .telegram import TelegramChannel
 
 logger = logging.getLogger(__name__)
@@ -127,17 +127,19 @@ class NotificationService:
         names = [ChannelDetector.get_channel_name(ch) for ch in self._available_channels]
         return ", ".join(names)
 
-    def generate_daily_report(self, results: list[AnalysisResult], report_date: str | None = None) -> str:
-        """生成日报"""
-        return ReportGenerator.generate_dashboard_report(results, report_date)
-
     def generate_dashboard_report(self, results: list[AnalysisResult], report_date: str | None = None) -> str:
         """生成决策仪表盘报告"""
-        return ReportGenerator.generate_dashboard_report(results, report_date)
+        formatter = get_output_formatter()
+        report = formatter.build_report(results, report_date)
+        return formatter.to_markdown(report)
 
     def generate_single_stock_report(self, result: AnalysisResult) -> str:
         """生成单股报告"""
-        return ReportGenerator.generate_single_stock_report(result)
+        formatter = get_output_formatter()
+        report = formatter.build_report([result])
+        if report.stocks:
+            return formatter.to_single_stock_markdown(report.stocks[0])
+        return ""
 
     async def send(self, content: str, **kwargs: Any) -> bool:
         """

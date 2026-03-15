@@ -24,7 +24,8 @@ from ashare_analyzer.config import Config, check_config_valid, get_config, get_c
 from ashare_analyzer.dependencies import get_data_manager
 from ashare_analyzer.infrastructure import aiohttp_session_manager
 from ashare_analyzer.notification import get_notification_service
-from ashare_analyzer.utils import get_console, get_display
+from ashare_analyzer.output import get_output_formatter
+from ashare_analyzer.utils import get_console
 from ashare_analyzer.utils.logging_config import setup_logging
 from ashare_analyzer.utils.stock_code import StockType, detect_stock_type
 
@@ -288,8 +289,9 @@ async def run_full_analysis_async(
             )
 
         if results:
-            display = get_display()
-            display.show_final_report(results)
+            formatter = get_output_formatter()
+            report = formatter.build_report(results)
+            formatter.display_report(report)
 
         return results
 
