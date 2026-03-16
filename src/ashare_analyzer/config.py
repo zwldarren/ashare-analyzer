@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
+from dotenv import load_dotenv
 from pydantic import AfterValidator, BeforeValidator, Field, ValidationError, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -163,14 +164,27 @@ def _get_base_dir() -> str:
     return os.environ.get("BASE_DIR") or str(Path.home() / ".ashare-analyzer")
 
 
+_DEFAULT_CONFIG_TOML = """# ashare-analyzer 配置文件
+
+stock_list = []
+
+[ai]
+llm_model = ""
+llm_api_key = ""
+"""
+
+
 def _load_toml_config() -> dict[str, Any]:
     """Load configuration from TOML file.
 
-    Returns empty dict if file doesn't exist.
+    Creates a default config file if it doesn't exist.
     Raises ConfigurationError with helpful message if file exists but is malformed.
     """
     config_path = Path(_get_base_dir()) / "config.toml"
     if not config_path.exists():
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(_DEFAULT_CONFIG_TOML, encoding="utf-8")
+        logger.info(f"已创建默认配置文件: {config_path}")
         return {}
 
     try:
@@ -490,10 +504,10 @@ class Config(BaseSettings):
         warnings_list: list[str] = []
 
         if not self.stock_list:
-            warnings_list.append("警告：未配置自选股列表 (STOCK_LIST)")
+            warnings_list.append("警告：未配置自选股列表 (stock_list)")
 
         if not self.ai.llm_api_key:
-            warnings_list.append("警告：未配置大模型 API Key（LLM_API_KEY），AI 分析功能将不可用")
+            warnings_list.append("警告：未配置大模型 API Key (ai.llm_api_key)，AI 分析功能将不可用")
 
         if (
             not self.search.bocha_api_keys
@@ -534,6 +548,8 @@ def get_config() -> Config:
     Returns:
         Config instance with all settings loaded.
     """
+    load_dotenv(_PROJECT_ROOT / ".env", override=False)
+
     toml_config = _load_toml_config()
     toml_env = _flatten_toml_to_env(toml_config)
 
@@ -552,6 +568,8 @@ def get_config_safe() -> tuple[Config | None, list[str]]:
     """
     errors = []
     try:
+        load_dotenv(_PROJECT_ROOT / ".env", override=False)
+
         toml_config = _load_toml_config()
         toml_env = _flatten_toml_to_env(toml_config)
         current_env = dict(os.environ)
@@ -579,15 +597,15 @@ def check_config_valid(config: Config | None) -> tuple[bool, list[str]]:
 
     # Check required AI configuration
     if not config.ai.llm_api_key:
-        missing.append("LLM_API_KEY (AI 模型 API 密钥)")
+        missing.append("ai.llm_api_key (AI 模型 API 密钥)")
 
     # Check stock list
     if not config.stock_list:
-        missing.append("STOCK_LIST (股票代码列表)")
+        missing.append("stock_list (股票代码列表)")
 
     # Check AI model
     if not config.ai.llm_model:
-        missing.append("LLM_MODEL (AI 模型名称)")
+        missing.append("ai.llm_model (AI 模型名称)")
 
     is_valid = len(missing) == 0
     return is_valid, missing

@@ -163,12 +163,13 @@ async def run_main_async(
         from rich.console import Console
 
         console = Console()
-        console.print("\n[bold yellow]⚠️ 未检测到有效配置[/bold yellow]")
-        console.print("\n[dim]缺少以下必需配置:[/dim]")
+        console.print("\n[bold yellow]⚠️ 未检测到有效配置[/bold yellow]\n")
+        console.print("[dim]缺少以下必需配置:[/dim]")
         for item in missing:
             console.print(f"  - {item}")
-        console.print("\n[dim]请运行以下命令完成初始化:[/dim]")
-        console.print("  [bold cyan]ashare-analyzer init[/bold cyan]")
+        console.print("\n[dim]请编辑配置文件:[/dim]")
+        console.print("  [bold cyan]~/.ashare-analyzer/config.toml[/bold cyan]")
+        console.print("\n[dim]或通过环境变量/命令行参数设置[/dim]")
         return 1
 
     config = get_config()
@@ -267,7 +268,7 @@ async def run_full_analysis_async(
             stock_codes = config.stock_list
 
         if not stock_codes:
-            logger.error("未配置自选股列表，请在 .env 文件中设置 STOCK_LIST")
+            logger.error("未配置自选股列表，请在 config.toml 中设置 stock_list 或通过 --stocks 参数指定")
             return []
 
         max_workers = workers or config.system.max_workers

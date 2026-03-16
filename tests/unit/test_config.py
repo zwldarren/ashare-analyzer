@@ -307,7 +307,10 @@ class TestGetConfigMergePriority:
             "stock_list": ["600519", "000858", "000001"],
         }
 
-        with patch("ashare_analyzer.config._load_toml_config", return_value=toml_config):
+        with (
+            patch("ashare_analyzer.config._load_toml_config", return_value=toml_config),
+            patch("ashare_analyzer.config.load_dotenv"),
+        ):
             config = get_config()
 
         assert "600519" in config.stock_list
