@@ -270,6 +270,33 @@ model = ""  # 可选，留空则使用主 LLM 模型
 
 ---
 
+### 持仓配置
+
+用于配置股票持仓信息，系统会在分析报告中展示持仓盈亏情况：
+
+```toml
+[portfolio]
+600519 = {quantity = 100, cost_price = 1800.50}
+
+[portfolio.300750]
+quantity = 200
+cost_price = 215.80
+```
+
+| 配置项 | TOML 路径 | 类型 | 说明 |
+|--------|-----------|------|------|
+| 持仓数量 | `portfolio.<股票代码>.quantity` | int | 持有股数（必须 ≥ 1） |
+| 成本价 | `portfolio.<股票代码>.cost_price` | float | 买入成本价（必须 ≥ 0） |
+
+> **注意**：持仓配置仅支持 TOML 配置文件，不支持环境变量。每个股票代码作为单独的 section，包含 `quantity` 和 `cost_price` 两个必填字段。
+
+配置持仓后，系统会在分析报告中自动计算并展示：
+- 当前市值
+- 盈亏金额
+- 盈亏比例
+
+---
+
 ## 配置示例
 
 ### 最小配置
@@ -346,13 +373,23 @@ akshare_priority = 1
 [news_filter]
 enabled = true
 min_results = 3
+
+# 持仓配置（可选）
+[portfolio]
+[portfolio.600519]
+quantity = 100
+cost_price = 1800.50
+
+[portfolio.300750]
+quantity = 200
+cost_price = 215.80
 ```
 
 ---
 
 ## 环境变量对照表
 
-所有 TOML 配置项都可以通过环境变量设置。以下是完整对照表：
+大部分 TOML 配置项都可以通过环境变量设置。以下是完整对照表：
 
 | TOML 路径 | 环境变量 |
 |-----------|----------|

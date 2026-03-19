@@ -1,6 +1,6 @@
 """输出系统数据模型"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -59,13 +59,18 @@ class StockReport:
     action: str
     confidence: int
     position_ratio: float
-    trend_prediction: str
-    decision_reasoning: str
-    agent_opinions: list[AgentOpinion]
-    consensus_level: str
-    key_factors: list[str]
-    risk_warning: str | None
-    market_snapshot: MarketSnapshot | None
+    action_quantity: int = 0  # Shares to buy/sell
+    position_action: str = "no_action"  # Type of position action
+    trend_prediction: str = ""
+    decision_reasoning: str = ""
+    agent_opinions: list[AgentOpinion] = field(default_factory=list)
+    consensus_level: str = "N/A"
+    key_factors: list[str] = field(default_factory=list)
+    risk_warning: str | None = None
+    market_snapshot: MarketSnapshot | None = None
+    has_position: bool = False
+    position_quantity: int = 0
+    position_cost_price: float = 0.0
     success: bool = True
     error_message: str | None = None
     data_sources: str = ""

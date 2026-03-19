@@ -21,6 +21,7 @@ register_builtin_providers()
 if TYPE_CHECKING:
     from ashare_analyzer.ai.analyzer import AIAnalyzer
     from ashare_analyzer.data.manager import DataManager
+    from ashare_analyzer.portfolio.service import PortfolioService
     from ashare_analyzer.search.service import SearchService
 
 
@@ -107,4 +108,32 @@ def get_search_service() -> SearchService:
         llm_client=get_filter_llm_client(),
     )
     service.set_db(get_db())
+    return service
+
+
+@cache
+def get_portfolio_service() -> PortfolioService:
+    """
+    Get portfolio service instance (singleton).
+
+    Portfolio service manages position tracking and enrichment
+    with realtime price data.
+
+    Returns:
+        PortfolioService singleton instance
+    """
+    from ashare_analyzer.portfolio.repository import PortfolioRepository
+    from ashare_analyzer.portfolio.service import PortfolioService
+
+    db = get_db()
+    data_manager = get_data_manager()
+    repository = PortfolioRepository(db)
+
+    service = PortfolioService(data_manager=data_manager, repository=repository)
+
+    # Load positions from config if present
+    config = get_config()
+    if config.portfolio.positions:
+        service.load_from_config(config.portfolio)
+
     return service

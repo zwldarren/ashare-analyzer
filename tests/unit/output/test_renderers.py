@@ -6,6 +6,280 @@ from ashare_analyzer.output.models import AgentOpinion, MarketSnapshot, Report, 
 from ashare_analyzer.output.renderers.markdown import MarkdownRenderer
 
 
+def test_build_action_description_sell_with_quantity():
+    """Test action description for sell with quantity."""
+    from rich.console import Console
+
+    from ashare_analyzer.output.renderers.console import ConsoleRenderer
+
+    console = Console()
+    renderer = ConsoleRenderer(console)
+
+    stock = StockReport(
+        code="600519",
+        name="贵州茅台",
+        action="SELL",
+        confidence=75,
+        position_ratio=0.0,
+        action_quantity=500,
+        position_action="reduce_position",
+        trend_prediction="看空",
+        decision_reasoning="技术面走弱",
+        agent_opinions=[],
+        consensus_level="50%",
+        key_factors=[],
+        risk_warning=None,
+        market_snapshot=None,
+        has_position=True,
+        position_quantity=1000,
+        position_cost_price=1800.0,
+    )
+
+    desc = renderer._build_action_description(stock)
+    assert "卖出 500 股" in desc
+    assert "50%" in desc
+
+
+def test_build_action_description_buy_with_quantity():
+    """Test action description for buy with quantity."""
+    from rich.console import Console
+
+    from ashare_analyzer.output.renderers.console import ConsoleRenderer
+
+    console = Console()
+    renderer = ConsoleRenderer(console)
+
+    stock = StockReport(
+        code="600519",
+        name="贵州茅台",
+        action="BUY",
+        confidence=85,
+        position_ratio=0.15,
+        action_quantity=800,
+        position_action="open_position",
+        trend_prediction="看多",
+        decision_reasoning="突破阻力位",
+        agent_opinions=[],
+        consensus_level="85%",
+        key_factors=[],
+        risk_warning=None,
+        market_snapshot=None,
+        has_position=False,
+        position_quantity=0,
+        position_cost_price=0.0,
+    )
+
+    desc = renderer._build_action_description(stock)
+    assert "买入 800 股" in desc
+    assert "新开仓" in desc
+
+
+def test_render_stock_section_with_trade_quantity():
+    """Test markdown rendering with trade quantity."""
+    renderer = MarkdownRenderer()
+
+    stock = StockReport(
+        code="000338",
+        name="潍柴动力",
+        action="SELL",
+        confidence=65,
+        position_ratio=0.0,
+        action_quantity=500,
+        position_action="reduce_position",
+        trend_prediction="看空",
+        decision_reasoning="基本面恶化",
+        agent_opinions=[],
+        consensus_level="50%",
+        key_factors=["趋势走弱"],
+        risk_warning="风险等级: low",
+        market_snapshot=None,
+        has_position=True,
+        position_quantity=1000,
+        position_cost_price=24.55,
+    )
+
+    report = Report(
+        report_date="2026-03-16",
+        stocks=[stock],
+        summary=ReportSummary(total_count=1, buy_count=0, hold_count=0, sell_count=1),
+    )
+
+    result = renderer.render_full(report)
+    assert "卖出 500 股" in result
+    assert "50%" in result
+
+
+def test_build_action_description_md_hold_with_position():
+    """Test markdown action description for hold with position."""
+    renderer = MarkdownRenderer()
+
+    stock = StockReport(
+        code="600519",
+        name="贵州茅台",
+        action="HOLD",
+        confidence=60,
+        position_ratio=0.0,
+        action_quantity=0,
+        position_action="keep_position",
+        trend_prediction="震荡",
+        decision_reasoning="观望",
+        agent_opinions=[],
+        consensus_level="40%",
+        key_factors=[],
+        risk_warning=None,
+        market_snapshot=None,
+        has_position=True,
+        position_quantity=500,
+        position_cost_price=1800.0,
+    )
+
+    desc = renderer._build_action_description_md(stock)
+    assert desc == "持有当前仓位"
+
+
+def test_build_action_description_hold_no_position():
+    """Test markdown action description for hold without position."""
+    renderer = MarkdownRenderer()
+
+    stock = StockReport(
+        code="000001",
+        name="平安银行",
+        action="HOLD",
+        confidence=50,
+        position_ratio=0.0,
+        action_quantity=0,
+        position_action="keep_position",
+        trend_prediction="震荡",
+        decision_reasoning="观望",
+        agent_opinions=[],
+        consensus_level="N/A",
+        key_factors=[],
+        risk_warning=None,
+        market_snapshot=None,
+        has_position=False,
+        position_quantity=0,
+        position_cost_price=0.0,
+    )
+
+    desc = renderer._build_action_description_md(stock)
+    assert desc == "观望（无持仓）"
+
+
+def test_build_action_description_md_buy_new_position():
+    """Test markdown action description for buy with new position."""
+    renderer = MarkdownRenderer()
+
+    stock = StockReport(
+        code="000858",
+        name="五粮液",
+        action="BUY",
+        confidence=75,
+        position_ratio=0.1,
+        action_quantity=800,
+        position_action="open_position",
+        trend_prediction="看多",
+        decision_reasoning="突破阻力位",
+        agent_opinions=[],
+        consensus_level="75%",
+        key_factors=[],
+        risk_warning=None,
+        market_snapshot=None,
+        has_position=False,
+        position_quantity=0,
+        position_cost_price=0.0,
+    )
+
+    desc = renderer._build_action_description_md(stock)
+    assert desc == "买入 800 股（新开仓）"
+
+
+def test_build_action_description_md_buy_add_position():
+    """Test markdown action description for buy adding to position."""
+    renderer = MarkdownRenderer()
+
+    stock = StockReport(
+        code="000858",
+        name="五粮液",
+        action="BUY",
+        confidence=75,
+        position_ratio=0.1,
+        action_quantity=400,
+        position_action="add_position",
+        trend_prediction="看多",
+        decision_reasoning="回调加仓",
+        agent_opinions=[],
+        consensus_level="75%",
+        key_factors=[],
+        risk_warning=None,
+        market_snapshot=None,
+        has_position=True,
+        position_quantity=500,
+        position_cost_price=120.0,
+    )
+
+    desc = renderer._build_action_description_md(stock)
+    assert desc == "买入 400 股（加仓）"
+
+
+def test_render_stock_section_displays_action_description():
+    """Test that action description appears in rendered output."""
+    renderer = MarkdownRenderer()
+
+    stock = StockReport(
+        code="000888",
+        name="峨眉山A",
+        action="SELL",
+        confidence=70,
+        position_ratio=0.0,
+        action_quantity=300,
+        position_action="reduce_position",
+        trend_prediction="看空",
+        decision_reasoning="技术面恶化",
+        agent_opinions=[],
+        consensus_level="70%",
+        key_factors=[],
+        risk_warning=None,
+        market_snapshot=None,
+        has_position=True,
+        position_quantity=600,
+        position_cost_price=15.0,
+    )
+
+    result = renderer.render_single_stock(stock)
+    assert "建议操作" in result
+    assert "卖出 300 股" in result
+    assert "50%" in result  # percentage of position
+
+
+def test_render_stock_section_no_action_for_hold():
+    """Test that action description is not shown for hold without position."""
+    renderer = MarkdownRenderer()
+
+    stock = StockReport(
+        code="000001",
+        name="平安银行",
+        action="HOLD",
+        confidence=50,
+        position_ratio=0.0,
+        action_quantity=0,
+        position_action="keep_position",
+        trend_prediction="震荡",
+        decision_reasoning="观望",
+        agent_opinions=[],
+        consensus_level="N/A",
+        key_factors=[],
+        risk_warning=None,
+        market_snapshot=None,
+        has_position=False,
+        position_quantity=0,
+        position_cost_price=0.0,
+    )
+
+    result = renderer.render_single_stock(stock)
+    # No action description for hold without position
+    assert "建议操作" not in result
+
+
 class TestMarkdownRenderer:
     """Tests for MarkdownRenderer class."""
 

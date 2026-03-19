@@ -51,23 +51,41 @@ HOLD conditions:
 - OR low consensus (consensus_level < 0.5)
 - OR mixed signals with high uncertainty
 
-=== Position Sizing ===
-Base position determined by confidence:
-- 90-100%: position_ratio = 0.8
-- 70-89%: position_ratio = 0.5
-- 50-69%: position_ratio = 0.3
-- <50%: position_ratio = 0
+=== Position Context Rules ===
+When you have existing positions:
+- Has position + SELL signal → Decide: reduce_position (sell some) or close_position (sell all)
+- Has position + HOLD signal → keep_position (maintain current holdings)
+- Has position + BUY signal → Decide: add_position (buy more) or keep_position (satisfied)
+- No position + BUY signal → open_position (new position)
+- No position + SELL/HOLD signal → no_action (nothing to do)
 
-IMPORTANT: Always respect max_position_limit from risk manager!
+=== Trade Quantity Decision ===
+You MUST decide specific trade quantities based on your analysis:
 
-=== Confidence Levels ===
-- 90-100%: Multiple strong signals align, clear consensus
-- 70-89%: Majority agreement, moderate confidence
-- 50-69%: Mixed signals, directional but uncertain
-- 30-49%: Conflicting signals, low confidence
-- 10-29%: No clear direction, recommend hold
+**For SELL with existing position:**
+- Close position (sell 100%) when: high confidence SELL, critical risks, or strong bearish signals
+- Reduce position (partial sell) when: moderate confidence, want to reduce exposure
+- Trade quantity: Specify exact shares to sell based on your conviction
 
-Use the analyze_signal function to return your decision."""
+**For BUY:**
+- Consider position_ratio as maximum allocation
+- Current position size minus target position size = trade direction
+- Trade quantity: Specify exact shares to buy based on your conviction
+
+**For HOLD:**
+- Trade quantity should be 0
+- Position action should be keep_position or no_action
+
+=== Output Format ===
+Use the analyze_signal function with these fields:
+- signal: "buy", "sell", or "hold"
+- confidence: 0-100
+- reasoning: Your decision explanation (max 200 chars)
+- trade_quantity: Number of shares to trade (0 for HOLD)
+- position_action: One of open_position/add_position/reduce_position/close_position/keep_position/no_action
+- position_ratio: Target allocation (0-1)
+
+Remember: You are the FINAL decision maker. Use your judgment to decide specific quantities."""
 
 
 class PortfolioManagerAgent(BaseAgent):
@@ -134,6 +152,9 @@ class PortfolioManagerAgent(BaseAgent):
             risk_manager_signal = context.get("risk_manager_signal", {})
             consensus_data = context.get("consensus_data", {})
 
+            # Get portfolio context
+            portfolio = context.get("portfolio", {})
+
             if not agent_signals:
                 return AgentSignal(
                     agent_name=self.name,
@@ -149,10 +170,10 @@ class PortfolioManagerAgent(BaseAgent):
             # Use LLM if available
             if self._llm_client and self._llm_client.is_available():
                 decision = await self._make_llm_decision(
-                    stock_code, stock_name, agent_signals, consensus_data, max_position
+                    stock_code, stock_name, agent_signals, consensus_data, max_position, portfolio
                 )
             else:
-                decision = self._make_rule_based_decision(agent_signals, consensus_data, max_position)
+                decision = self._make_rule_based_decision(agent_signals, consensus_data, max_position, portfolio)
 
             # Apply risk limit to position ratio
             decision["position_ratio"] = min(decision.get("position_ratio", 0), max_position)
@@ -164,6 +185,10 @@ class PortfolioManagerAgent(BaseAgent):
 
             signal = self._action_to_signal(decision["action"])
 
+            # Extract fields from result for metadata
+            trade_quantity = decision.get("trade_quantity", 0)
+            position_action = decision.get("position_action", "no_action")
+
             return AgentSignal(
                 agent_name=self.name,
                 signal=signal,
@@ -171,7 +196,9 @@ class PortfolioManagerAgent(BaseAgent):
                 reasoning=decision["reasoning"],
                 metadata={
                     "action": decision["action"],
+                    "position_action": position_action,
                     "position_ratio": decision["position_ratio"],
+                    "trade_quantity": trade_quantity,
                     "max_position_limit": max_position,
                     "key_factors": decision.get("key_factors", []),
                     "risk_level": decision.get("risk_level", "medium"),
@@ -204,14 +231,17 @@ class PortfolioManagerAgent(BaseAgent):
         agent_signals: dict[str, Any],
         consensus_data: dict[str, Any],
         max_position: float,
+        portfolio: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Use LLM to make final decision (async)."""
-        prompt = self._build_decision_prompt(stock_code, stock_name, agent_signals, consensus_data, max_position)
+        prompt = self._build_decision_prompt(
+            stock_code, stock_name, agent_signals, consensus_data, max_position, portfolio
+        )
 
         self._logger.debug(f"[{stock_code}] PortfolioManager调用LLM进行决策...")
 
         if not self._llm_client:
-            return self._make_rule_based_decision(agent_signals, consensus_data, max_position)
+            return self._make_rule_based_decision(agent_signals, consensus_data, max_position, portfolio)
 
         try:
             result = await self._llm_client.generate_with_tool(
@@ -239,20 +269,31 @@ class PortfolioManagerAgent(BaseAgent):
                 self._logger.warning(
                     f"[{stock_code}] LLM返回格式无效(weighted_score={weighted_score:.1f})，使用规则回退"
                 )
-                return self._make_rule_based_decision(agent_signals, consensus_data, max_position)
+                return self._make_rule_based_decision(agent_signals, consensus_data, max_position, portfolio)
 
         except Exception as e:
             weighted_score = consensus_data.get("weighted_score", 0)
             self._logger.warning(f"[{stock_code}] LLM决策失败: {e}，使用规则回退(weighted_score={weighted_score:.1f})")
-            return self._make_rule_based_decision(agent_signals, consensus_data, max_position)
+            return self._make_rule_based_decision(agent_signals, consensus_data, max_position, portfolio)
 
     def _make_rule_based_decision(
         self,
         agent_signals: dict[str, Any],
         consensus_data: dict[str, Any],
         max_position: float,
+        portfolio: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Fallback rule-based decision."""
+        """Fallback rule-based decision.
+
+        Args:
+            agent_signals: Signals from all analysis agents
+            consensus_data: Consensus metrics including weighted_score
+            max_position: Maximum position ratio allowed by risk manager
+            portfolio: Portfolio context with position info
+
+        Returns:
+            Decision dict with action, confidence, position_ratio, trade_quantity, etc.
+        """
         weighted_score = consensus_data.get("weighted_score", 0)
         risk_flags = consensus_data.get("risk_flags", [])
 
@@ -260,6 +301,12 @@ class PortfolioManagerAgent(BaseAgent):
         buy_count = sum(1 for s in agent_signals.values() if s.get("signal", "").lower() == "buy")
         sell_count = sum(1 for s in agent_signals.values() if s.get("signal", "").lower() == "sell")
         total_agents = len(agent_signals)
+
+        # Extract portfolio information
+        has_position = portfolio.get("has_position", False) if portfolio else False
+        position_quantity = portfolio.get("position_quantity", 0) if portfolio else 0
+        total_value = portfolio.get("total_value", 0) if portfolio else 0
+        current_price = portfolio.get("current_price", 0) if portfolio else 0
 
         # Determine action
         if weighted_score >= 30:
@@ -278,14 +325,60 @@ class PortfolioManagerAgent(BaseAgent):
             confidence = max(30, confidence - len(risk_flags) * 10)
             reasoning += f"（注意{len(risk_flags)}个风险点）"
 
-        # Calculate position ratio
+        # Calculate position ratio and trade quantity
+        trade_quantity = 0
+        position_action = "no_action"
+
         if action == "BUY":
             base_position = confidence / 100 * 0.8
             position_ratio = min(base_position, max_position)
+
+            # Calculate trade quantity for BUY
+            if total_value > 0 and current_price > 0:
+                target_value = total_value * position_ratio
+                target_shares = int(target_value / current_price)
+                if has_position:
+                    # Add to existing position
+                    trade_quantity = max(0, target_shares - position_quantity)
+                    position_action = "add_position" if trade_quantity > 0 else "keep_position"
+                else:
+                    # New position
+                    trade_quantity = target_shares
+                    position_action = "open_position"
+            else:
+                # No portfolio info, use position ratio only
+                position_action = "open_position"
+
         elif action == "SELL":
-            position_ratio = 1.0  # Full exit
+            position_ratio = 1.0  # Full exit for SELL
+
+            # Calculate trade quantity for SELL
+            if has_position and position_quantity > 0:
+                # Determine sell percentage based on confidence
+                # Higher confidence = sell more
+                if confidence >= 70:
+                    # High confidence: close entire position
+                    trade_quantity = position_quantity
+                    position_action = "close_position"
+                    reasoning += "，建议清仓"
+                elif confidence >= 50:
+                    # Medium confidence: sell 50% of position
+                    trade_quantity = int(position_quantity * 0.5)
+                    position_action = "reduce_position"
+                    reasoning += "，建议减半仓"
+                else:
+                    # Low confidence: sell 30% of position
+                    trade_quantity = int(position_quantity * 0.3)
+                    position_action = "reduce_position"
+                    reasoning += "，建议减仓"
+            else:
+                # No position, nothing to sell
+                position_action = "no_action"
+                position_ratio = 0.0
         else:
+            # HOLD
             position_ratio = 0.0
+            position_action = "keep_position" if has_position else "no_action"
 
         # Build risk assessment based on agent signals
         concerns = []
@@ -310,6 +403,8 @@ class PortfolioManagerAgent(BaseAgent):
             "action": action,
             "confidence": confidence,
             "position_ratio": position_ratio,
+            "trade_quantity": trade_quantity,
+            "position_action": position_action,
             "reasoning": reasoning,
             "key_factors": [f"加权得分: {weighted_score:.1f}"],
             "risk_level": risk_level,
@@ -326,6 +421,7 @@ class PortfolioManagerAgent(BaseAgent):
         agent_signals: dict[str, Any],
         consensus_data: dict[str, Any],
         max_position: float,
+        portfolio: dict[str, Any] | None = None,
     ) -> str:
         """Build decision prompt for LLM."""
         signal_lines = []
@@ -337,13 +433,41 @@ class PortfolioManagerAgent(BaseAgent):
 
         agent_signals_str = "\n".join(signal_lines)
 
+        # Build portfolio section with detailed position info
+        portfolio_section = ""
+        if portfolio:
+            has_position = portfolio.get("has_position", False)
+            if has_position:
+                quantity = portfolio.get("position_quantity", 0)
+                cost_price = portfolio.get("position_cost_price", 0)
+                current_price = portfolio.get("current_price", 0)
+                profit_pct = portfolio.get("current_profit_loss_pct")
+                total_value = portfolio.get("total_value", 0)
+                position_ratio = portfolio.get("current_position_ratio", 0)
+
+                profit_str = f"{profit_pct:.2f}%" if profit_pct is not None else "N/A"
+                portfolio_section = f"""
+=== 当前持仓详情 ===
+持有股数: {quantity} 股
+成本价: ¥{cost_price:.2f}
+当前价: ¥{current_price:.2f}
+浮盈亏: {profit_str}
+持仓市值: ¥{(current_price * quantity):.0f}
+占总资产: {position_ratio * 100:.1f}%
+总资产: ¥{total_value:.0f}
+"""
+            else:
+                portfolio_section = """
+=== 当前持仓状态 ===
+持有该股票: 否
+"""
+
         return f"""请作为专业的投资组合经理，基于以下分析结果做出最终交易决策。
 
 === 股票信息 ===
 股票代码: {stock_code}
 股票名称: {stock_name}
-
-=== 分析师信号汇总 ===
+{portfolio_section}=== 分析师信号汇总 ===
 {agent_signals_str}
 
 === 共识数据 ===
@@ -354,7 +478,8 @@ class PortfolioManagerAgent(BaseAgent):
 === 风险限制 ===
 最大仓位限制: {max_position * 100:.0f}%
 
-请综合分析所有信号，在风险限制内使用 analyze_signal 函数做出决策。"""
+请综合分析所有信号，使用 analyze_signal 函数做出决策。
+关键：必须明确指定 trade_quantity（交易股数）和 position_action（仓位动作）。"""
 
     def _action_to_signal(self, action: str) -> SignalType:
         """Convert action to signal."""

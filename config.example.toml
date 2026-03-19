@@ -9,76 +9,79 @@ stock_list = ["600519", "300750"]
 llm_model = "deepseek/deepseek-reasoner"
 llm_api_key = "your-api-key-here"
 llm_base_url = "https://api.deepseek.com"
-llm_temperature = 0.7
-llm_max_tokens = 8192
-llm_request_delay = 2.0
-llm_max_retries = 5
-llm_retry_delay = 5.0
-llm_timeout = 300
+# llm_temperature = 0.7
+# llm_max_tokens = 8192
+# llm_request_delay = 2.0
+# llm_max_retries = 5
+# llm_retry_delay = 5.0
+# llm_timeout = 300
 
-# Fallback LLM Configuration (optional)
-[ai.fallback]
-model = "gemini/gemini-pro"
-api_key = "your-fallback-api-key"
-base_url = "https://generativelanguage.googleapis.com"
+# # Fallback LLM Configuration (optional)
+# [ai.fallback]
+# model = "gemini/gemini-pro"
+# api_key = "your-fallback-api-key"
+# base_url = "https://generativelanguage.googleapis.com"
 
-# Search Engine Configuration
-[search]
-bocha_api_keys = ["key1", "key2"]
-tavily_api_keys = ["key3"]
-brave_api_keys = []
-serpapi_api_keys = []
-searxng_base_url = ""
-searxng_username = ""
-searxng_password = ""
+# # Search Engine Configuration
+# [search]
+# bocha_api_keys = ["key1", "key2"]
+# tavily_api_keys = ["key3"]
+# brave_api_keys = []
+# serpapi_api_keys = []
+# searxng_base_url = ""
+# searxng_username = ""
+# searxng_password = ""
 
-# Notification - Email
-[notification.email]
-sender = "your-email@gmail.com"
-sender_name = "ashare_analyzer股票分析助手"
-password = "your-app-password"
-receivers = ["receiver@example.com"]
+# # Notification - Email
+# [notification.email]
+# sender = "your-email@gmail.com"
+# sender_name = "ashare_analyzer股票分析助手"
+# password = "your-app-password"
+# receivers = ["receiver@example.com"]
 
-# Notification - Telegram
-[notification.telegram]
-bot_token = ""
-chat_id = ""
-message_thread_id = ""
+# # Notification - Telegram
+# [notification.telegram]
+# bot_token = ""
+# chat_id = ""
+# message_thread_id = ""
 
-# Notification - Discord
-[notification.discord]
-webhook_url = ""
+# # Notification - Discord
+# [notification.discord]
+# webhook_url = ""
 
-# Notification - Custom Webhook
-[notification.webhook]
-urls = []
-bearer_token = ""
+# # Notification - Custom Webhook
+# [notification.webhook]
+# urls = []
+# bearer_token = ""
 
-# System Settings
-[system]
-log_level = "INFO"
-max_workers = 3
-debug = false
-http_proxy = ""
-https_proxy = ""
+# # System Settings
+# [system]
+# log_level = "INFO"
+# max_workers = 3
+# debug = false
+# http_proxy = ""
+# https_proxy = ""
 
-# Schedule Configuration
-[schedule]
-enabled = false
-time = "18:00"
+# # Schedule Configuration
+# [schedule]
+# enabled = false
+# time = "18:00"
 
-# Data Source Configuration
-[data_source]
-tushare_token = ""
-efinance_priority = 0
-akshare_priority = 1
-tushare_priority = 2
-baostock_priority = 3
-yfinance_priority = 4
-realtime_source_priority = "tencent,akshare_sina,efinance,akshare_em"
+# # Data Source Configuration
+# [data_source]
+# tushare_token = ""
+# efinance_priority = 0
+# akshare_priority = 1
+# tushare_priority = 2
+# baostock_priority = 3
+# yfinance_priority = 4
+# realtime_source_priority = "tencent,akshare_sina,efinance,akshare_em"
 
-# News Filter Configuration
-[news_filter]
-enabled = true
-min_results = 3
-model = ""
+# # News Filter Configuration
+# [news_filter]
+# enabled = true
+# min_results = 3
+# model = ""
+
+# [portfolio]
+# 600519 = {quantity = 100, cost_price = 1800.50}

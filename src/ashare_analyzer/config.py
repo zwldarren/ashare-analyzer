@@ -394,6 +394,23 @@ class DataSourceConfig(BaseSettings):
     yfinance_priority: int = Field(default=4, ge=0, le=10, validation_alias="YFINANCE_PRIORITY")
 
 
+class PositionConfig(BaseSettings):
+    """Position configuration from config file."""
+
+    model_config = _COMMON_CONFIG
+
+    quantity: int = Field(ge=1)
+    cost_price: float = Field(ge=0.0)
+
+
+class PortfolioConfig(BaseSettings):
+    """Portfolio configuration section."""
+
+    model_config = _COMMON_CONFIG
+
+    positions: dict[str, PositionConfig] = Field(default_factory=dict)
+
+
 # ==========================================
 # Main configuration class
 # ==========================================
@@ -434,6 +451,7 @@ class Config(BaseSettings):
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     realtime_quote: RealtimeQuoteConfig = Field(default_factory=RealtimeQuoteConfig)
     datasource: DataSourceConfig = Field(default_factory=DataSourceConfig)
+    portfolio: PortfolioConfig = Field(default_factory=PortfolioConfig)
 
     @field_validator("stock_list_str", mode="before")
     @classmethod
@@ -553,11 +571,27 @@ def get_config() -> Config:
     toml_config = _load_toml_config()
     toml_env = _flatten_toml_to_env(toml_config)
 
-    current_env = dict(os.environ)
+    # Update os.environ with TOML values (so nested configs can see them)
+    # Environment variables take precedence over TOML values
+    for key, value in toml_env.items():
+        if key not in os.environ:
+            os.environ[key] = value
 
-    merged_env = {**toml_env, **current_env}
+    config = Config()
 
-    return Config.model_validate(merged_env)
+    portfolio_section = toml_config.get("portfolio", {})
+    if portfolio_section:
+        positions = {}
+        for code, pos_data in portfolio_section.items():
+            if isinstance(pos_data, dict) and "quantity" in pos_data and "cost_price" in pos_data:
+                try:
+                    positions[code] = PositionConfig(**pos_data)
+                except Exception as e:
+                    logger.warning(f"Invalid position config for {code}: {e}")
+        if positions:
+            config.portfolio = PortfolioConfig(positions=positions)
+
+    return config
 
 
 def get_config_safe() -> tuple[Config | None, list[str]]:
@@ -572,9 +606,27 @@ def get_config_safe() -> tuple[Config | None, list[str]]:
 
         toml_config = _load_toml_config()
         toml_env = _flatten_toml_to_env(toml_config)
-        current_env = dict(os.environ)
-        merged_env = {**toml_env, **current_env}
-        config = Config.model_validate(merged_env)
+
+        # Update os.environ with TOML values (so nested configs can see them)
+        # Environment variables take precedence over TOML values
+        for key, value in toml_env.items():
+            if key not in os.environ:
+                os.environ[key] = value
+
+        config = Config()
+
+        portfolio_section = toml_config.get("portfolio", {})
+        if portfolio_section:
+            positions = {}
+            for code, pos_data in portfolio_section.items():
+                if isinstance(pos_data, dict) and "quantity" in pos_data and "cost_price" in pos_data:
+                    try:
+                        positions[code] = PositionConfig(**pos_data)
+                    except Exception as e:
+                        logger.warning(f"Invalid position config for {code}: {e}")
+            if positions:
+                config.portfolio = PortfolioConfig(positions=positions)
+
         return config, []
     except ValidationError as e:
         errors.append(f"配置加载失败: {e}")

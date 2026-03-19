@@ -18,8 +18,10 @@ import logging
 from typing import Any
 
 from ashare_analyzer.ai.interface import IAIAnalyzer
+from ashare_analyzer.analysis.context import build_portfolio_context
 from ashare_analyzer.constants import normalize_signal
 from ashare_analyzer.data.stock_name_resolver import StockNameResolver
+from ashare_analyzer.dependencies import get_portfolio_service
 from ashare_analyzer.exceptions import AnalysisError
 from ashare_analyzer.models import AnalysisResult
 from ashare_analyzer.utils import get_display
@@ -47,6 +49,7 @@ class AIAnalyzer(IAIAnalyzer):
     def __init__(self):
         """Initialize AI analyzer with multi-agent coordinator."""
         self._init_agent_coordinator()
+        self._portfolio_service = get_portfolio_service()
         logger.debug("AI分析器初始化成功 (多Agent模式)")
 
     def _init_agent_coordinator(self) -> None:
@@ -156,8 +159,18 @@ class AIAnalyzer(IAIAnalyzer):
                 f"[{code}] 分析Agent完成: {len(consensus.participating_agents)}个Agent参与, 共识度{consensus_level:.2f}"
             )
 
-            # Step 4: Get current position status (can be extended to fetch from portfolio)
-            current_position = context.get("current_position", "none")
+            # Step 4: Build portfolio context with current price
+            current_price = 0.0
+            if "today" in context and context["today"]:
+                current_price = float(context["today"].get("close", 0))
+            elif "realtime" in context and context["realtime"]:
+                current_price = float(context["realtime"].get("price", 0))
+
+            portfolio_context = await build_portfolio_context(
+                self._portfolio_service,
+                code,
+                current_price=current_price,
+            )
 
             # Step 5: PortfolioManager makes final decision with risk constraints
             # Calculate weighted score from agent signals
@@ -166,7 +179,7 @@ class AIAnalyzer(IAIAnalyzer):
             decision_context = {
                 "code": code,
                 "stock_name": name,
-                "current_position": current_position,
+                "portfolio": portfolio_context,
                 "agent_signals": agent_signals,
                 "risk_manager_signal": {
                     "signal": risk_manager_signal.signal.to_string(),
@@ -192,6 +205,9 @@ class AIAnalyzer(IAIAnalyzer):
                 f"[{code}] 投资组合决策完成: {final_signal.metadata.get('action', 'unknown')} "
                 f"(置信度{final_signal.confidence}%, 仓位{final_signal.metadata.get('position_ratio', 0) * 100:.0f}%)"
             )
+
+            # Add portfolio context to context dict for result building
+            context["portfolio"] = portfolio_context
 
             # Step 6: Build AnalysisResult from decision
             result = self._build_analysis_result_from_decision(
@@ -272,6 +288,8 @@ class AIAnalyzer(IAIAnalyzer):
         metadata = final_signal.metadata
         action = metadata.get("action", "HOLD")
         position_ratio = metadata.get("position_ratio", 0.0)
+        trade_quantity = metadata.get("trade_quantity", 0)
+        position_action = metadata.get("position_action", "no_action")
         key_factors = metadata.get("key_factors", [])
         risk_assessment = metadata.get("risk_assessment", {})
 
@@ -316,6 +334,12 @@ class AIAnalyzer(IAIAnalyzer):
         # Build decision reason
         decision_reason = final_signal.reasoning
 
+        # Extract portfolio information from context
+        portfolio_info = context.get("portfolio", {})
+        has_position = portfolio_info.get("has_position", False)
+        position_quantity = portfolio_info.get("position_quantity", 0)
+        position_cost_price = portfolio_info.get("position_cost_price", 0.0)
+
         return AnalysisResult(
             code=code,
             name=name,
@@ -326,7 +350,12 @@ class AIAnalyzer(IAIAnalyzer):
             confidence_level=self._score_to_confidence(final_signal.confidence),
             final_action=action,
             position_ratio=position_ratio,
+            action_quantity=trade_quantity,
+            position_action=position_action,
             decision_reasoning=decision_reason,
+            has_position=has_position,
+            position_quantity=position_quantity,
+            position_cost_price=position_cost_price,
             dashboard=dashboard,
             analysis_summary=analysis_summary,
             risk_warning=risk_warning,

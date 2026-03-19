@@ -320,3 +320,38 @@ class TestBuildValuationContext:
         )
 
         assert "eps" not in result
+
+
+class TestBuildPortfolioContext:
+    """Tests for build_portfolio_context function."""
+
+    @pytest.mark.asyncio
+    async def test_build_portfolio_context_with_current_price(self):
+        """Test portfolio context includes current_price."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ashare_analyzer.analysis.context import build_portfolio_context
+
+        # Mock portfolio service with position
+        mock_service = MagicMock()
+        mock_position = MagicMock()
+        mock_position.code = "600519"
+        mock_position.quantity = 100
+        mock_position.cost_price = 1800.0
+        mock_position.current_price = 1850.0
+        mock_position.market_value = 185000.0
+        mock_position.profit_loss_pct = 2.78
+        mock_position.to_dict.return_value = {
+            "code": "600519",
+            "quantity": 100,
+            "cost_price": 1800.0,
+            "current_price": 1850.0,
+        }
+        mock_service.get_positions = AsyncMock(return_value=[mock_position])
+
+        result = await build_portfolio_context(mock_service, "600519", current_price=1850.0)
+
+        assert result["has_position"] is True
+        assert result["position_quantity"] == 100
+        assert result["current_price"] == 1850.0
+        assert result["current_profit_loss_pct"] == 2.78

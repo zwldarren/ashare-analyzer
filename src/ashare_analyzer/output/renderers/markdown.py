@@ -75,6 +75,35 @@ class MarkdownRenderer(ReportRenderer):
         lines.extend(["---", f"*{TEXT_DISCLAIMER}*"])
         return "\n".join(lines)
 
+    def _build_action_description_md(self, stock: StockReport) -> str:
+        """Build markdown action description.
+
+        Args:
+            stock: StockReport to describe
+
+        Returns:
+            Markdown formatted action description
+        """
+        if stock.action.upper() == "HOLD":
+            if stock.has_position:
+                return "持有当前仓位"
+            return "观望（无持仓）"
+
+        if stock.action.upper() == "SELL":
+            if stock.action_quantity > 0 and stock.has_position:
+                pct = (stock.action_quantity / stock.position_quantity * 100) if stock.position_quantity > 0 else 0
+                return f"卖出 {stock.action_quantity} 股（占持仓{pct:.0f}%）"
+            return "卖出"
+
+        if stock.action.upper() == "BUY":
+            if stock.action_quantity > 0:
+                if stock.has_position:
+                    return f"买入 {stock.action_quantity} 股（加仓）"
+                return f"买入 {stock.action_quantity} 股（新开仓）"
+            return "买入"
+
+        return ""
+
     def _render_stock_section(self, stock: StockReport) -> list[str]:
         """渲染单只股票部分"""
         emoji = get_signal_emoji(stock.action)
@@ -87,6 +116,13 @@ class MarkdownRenderer(ReportRenderer):
             f"**{emoji} {stock.action}** | 置信度: {stock.confidence}%",
             "",
         ]
+
+        # Trade action recommendation
+        if stock.action.upper() != "HOLD" or stock.has_position:
+            action_desc = self._build_action_description_md(stock)
+            if action_desc:
+                lines.append(f"**建议操作**: {action_desc}")
+                lines.append("")
 
         # 建议仓位
         if stock.position_ratio > 0:

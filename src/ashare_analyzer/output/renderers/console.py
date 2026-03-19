@@ -84,6 +84,46 @@ class ConsoleRenderer(ReportRenderer):
         self._display_stock_detail(stock)
         return ""
 
+    def _build_action_description(self, stock: StockReport) -> str:
+        """Build human-readable action description.
+
+        Args:
+            stock: StockReport to describe
+
+        Returns:
+            Formatted action description string with Rich markup
+        """
+        if stock.action.upper() == "HOLD":
+            if stock.has_position:
+                return "持有当前仓位"
+            return "观望（无持仓）"
+
+        if stock.action.upper() == "SELL":
+            if stock.has_position and stock.position_quantity > 0:
+                if stock.action_quantity > 0:
+                    # Calculate percentage of position being sold
+                    pct = (stock.action_quantity / stock.position_quantity * 100) if stock.position_quantity > 0 else 0
+                    # Determine action type
+                    if stock.position_action == "close_position":
+                        return f"[red]卖出 {stock.action_quantity} 股[/]（清仓，100%）"
+                    elif stock.position_action == "reduce_position":
+                        return f"[red]卖出 {stock.action_quantity} 股[/]（减仓{pct:.0f}%）"
+                    else:
+                        return f"[red]卖出 {stock.action_quantity} 股[/]（占持仓{pct:.0f}%）"
+                else:
+                    # No quantity specified, show general recommendation
+                    return "[red]卖出[/]（建议减仓）"
+            return "[red]卖出[/]（无持仓）"
+
+        if stock.action.upper() == "BUY":
+            if stock.action_quantity > 0:
+                if stock.has_position:
+                    return f"[green]买入 {stock.action_quantity} 股[/]（加仓）"
+                return f"[green]买入 {stock.action_quantity} 股[/]（新开仓）"
+            return "[green]买入[/]"
+
+        return ""
+
     def display_full(self, report: Report) -> None:
         """
         Display full report to console (side effect: prints to console).
@@ -151,11 +191,22 @@ class ConsoleRenderer(ReportRenderer):
 
         # Title with stock info
         position_str = f" | 仓位: {stock.position_ratio * 100:.0f}%" if stock.position_ratio > 0 else ""
+        holding_str = ""
+        if stock.has_position:
+            if stock.position_cost_price > 0:
+                holding_str = f" [dim](持有{stock.position_quantity}股@{stock.position_cost_price:.2f})[/]"
+            else:
+                holding_str = f" [dim](持有{stock.position_quantity}股)[/]"
         title_text = (
             f"{emoji} {stock.name} ({stock.code})"
-            f" — [{action_style}]{stock.action.upper()}[/] | 置信度: {stock.confidence}%{position_str}"
+            f" — [{action_style}]{stock.action.upper()}[/] | 置信度: {stock.confidence}%{position_str}{holding_str}"
         )
         self._console.print(Rule(title_text, style="dim"))
+
+        # Trade action recommendation
+        action_desc = self._build_action_description(stock)
+        if action_desc:
+            self._console.print(f"[bold]建议操作:[/] {action_desc}")
 
         # 决策理由
         if stock.decision_reasoning:

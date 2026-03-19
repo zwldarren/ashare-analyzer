@@ -30,7 +30,13 @@ class AnalysisResult:
 
     final_action: str = ""
     position_ratio: float = 0.0
+    action_quantity: int = 0  # Number of shares to buy (+) or sell (positive for sell)
+    # Type: open_position, add_position, reduce_position, close_position, keep_position, no_action
+    position_action: str = "no_action"
     decision_reasoning: str = ""
+    has_position: bool = False
+    position_quantity: int = 0
+    position_cost_price: float = 0.0
 
     dashboard: dict[str, Any] | None = None
 
@@ -57,7 +63,12 @@ class AnalysisResult:
             "confidence_level": self.confidence_level,
             "final_action": self.final_action,
             "position_ratio": self.position_ratio,
+            "action_quantity": self.action_quantity,
+            "position_action": self.position_action,
             "decision_reasoning": self.decision_reasoning,
+            "has_position": self.has_position,
+            "position_quantity": self.position_quantity,
+            "position_cost_price": self.position_cost_price,
             "dashboard": self.dashboard,
             "analysis_summary": self.analysis_summary,
             "risk_warning": self.risk_warning,

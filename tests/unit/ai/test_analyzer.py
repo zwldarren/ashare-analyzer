@@ -83,11 +83,15 @@ class TestAIAnalyzer:
         mock_portfolio_manager = MagicMock()
         mock_portfolio_manager.analyze = AsyncMock(return_value=mock_portfolio_signal)
 
+        mock_portfolio_service = MagicMock()
+        mock_portfolio_service.get_positions = AsyncMock(return_value=[])
+
         with patch("ashare_analyzer.ai.analyzer.get_display"):
             analyzer = AIAnalyzer.__new__(AIAnalyzer)
             analyzer._agent_coordinator = mock_coordinator
             analyzer._risk_manager_agent = mock_risk_manager
             analyzer._portfolio_manager = mock_portfolio_manager
+            analyzer._portfolio_service = mock_portfolio_service
 
             result = await analyzer.analyze(sample_analysis_context)
 
@@ -150,11 +154,15 @@ class TestAIAnalyzer:
         mock_portfolio_manager = MagicMock()
         mock_portfolio_manager.analyze = AsyncMock(return_value=mock_portfolio_signal)
 
+        mock_portfolio_service = MagicMock()
+        mock_portfolio_service.get_positions = AsyncMock(return_value=[])
+
         with patch("ashare_analyzer.ai.analyzer.get_display"):
             analyzer = AIAnalyzer.__new__(AIAnalyzer)
             analyzer._agent_coordinator = mock_coordinator
             analyzer._risk_manager_agent = mock_risk_manager
             analyzer._portfolio_manager = mock_portfolio_manager
+            analyzer._portfolio_service = mock_portfolio_service
 
             result = await analyzer.analyze(sample_analysis_context)
 

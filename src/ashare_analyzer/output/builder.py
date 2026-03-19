@@ -102,12 +102,18 @@ class ReportBuilder:
         # Determine action from final_action or decision_type
         action = normalize_signal(result.final_action or result.decision_type)
 
+        # Extract action quantity and position action from result
+        action_quantity = result.action_quantity
+        position_action = result.position_action
+
         return StockReport(
             code=result.code,
             name=name,
             action=action,
             confidence=confidence,
             position_ratio=result.position_ratio,
+            action_quantity=action_quantity,
+            position_action=position_action,
             trend_prediction=result.trend_prediction,
             decision_reasoning=result.decision_reasoning,
             agent_opinions=agent_opinions,
@@ -115,6 +121,9 @@ class ReportBuilder:
             key_factors=key_factors[:3] if key_factors else [],
             risk_warning=result.risk_warning if result.risk_warning else None,
             market_snapshot=market_snapshot,
+            has_position=result.has_position,
+            position_quantity=result.position_quantity,
+            position_cost_price=result.position_cost_price,
             success=result.success,
             error_message=result.error_message,
             data_sources=result.data_sources,

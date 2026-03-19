@@ -84,6 +84,10 @@ class TestPortfolioManagerAgent:
                 },
                 "risk_manager_signal": {"metadata": {"max_position_size": 1.0}},  # Allow full exit
                 "consensus_data": {"weighted_score": -50, "risk_flags": []},
+                "portfolio": {
+                    "has_position": True,
+                    "position_quantity": 100,
+                },
             }
 
             result = await agent.analyze(context)
@@ -404,3 +408,276 @@ class TestPortfolioManagerHelpers:
                 max_position=0.25,
             )
             assert result["action"] == "HOLD"
+
+
+class TestTradeQuantityCalculation:
+    """Tests for trade quantity calculation in PortfolioManagerAgent."""
+
+    @pytest.mark.asyncio
+    async def test_sell_high_confidence_closes_position(self):
+        """Test SELL with high confidence (>=70) closes entire position."""
+        with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
+            agent = PortfolioManagerAgent()
+
+            context = {
+                "code": "000338",
+                "stock_name": "潍柴动力",
+                "agent_signals": {
+                    "TechnicalAgent": {"signal": "sell", "confidence": 80},
+                },
+                "risk_manager_signal": {"metadata": {"max_position_size": 1.0}},
+                "consensus_data": {"weighted_score": -80, "risk_flags": []},
+                "portfolio": {
+                    "has_position": True,
+                    "position_quantity": 400,
+                    "position_cost_price": 23.85,
+                    "current_price": 23.80,
+                    "total_value": 100000,
+                },
+            }
+
+            result = await agent.analyze(context)
+
+            assert result.signal == SignalType.SELL
+            assert result.metadata["trade_quantity"] == 400  # All 400 shares
+            assert result.metadata["position_action"] == "close_position"
+            assert "清仓" in result.reasoning
+
+    @pytest.mark.asyncio
+    async def test_sell_medium_confidence_reduces_half(self):
+        """Test SELL with medium confidence (50-69) sells 50% of position."""
+        with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
+            agent = PortfolioManagerAgent()
+
+            context = {
+                "code": "000338",
+                "stock_name": "潍柴动力",
+                "agent_signals": {
+                    "TechnicalAgent": {"signal": "sell", "confidence": 60},
+                },
+                "risk_manager_signal": {"metadata": {"max_position_size": 1.0}},
+                "consensus_data": {"weighted_score": -60, "risk_flags": []},
+                "portfolio": {
+                    "has_position": True,
+                    "position_quantity": 400,
+                    "position_cost_price": 23.85,
+                    "current_price": 23.80,
+                    "total_value": 100000,
+                },
+            }
+
+            result = await agent.analyze(context)
+
+            assert result.signal == SignalType.SELL
+            assert result.metadata["trade_quantity"] == 200  # 50% of 400 = 200
+            assert result.metadata["position_action"] == "reduce_position"
+            assert "减半仓" in result.reasoning
+
+    @pytest.mark.asyncio
+    async def test_sell_low_confidence_reduces_30_percent(self):
+        """Test SELL with low confidence (<50) sells 30% of position."""
+        with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
+            agent = PortfolioManagerAgent()
+
+            context = {
+                "code": "000338",
+                "stock_name": "潍柴动力",
+                "agent_signals": {
+                    "TechnicalAgent": {"signal": "sell", "confidence": 40},
+                },
+                "risk_manager_signal": {"metadata": {"max_position_size": 1.0}},
+                "consensus_data": {"weighted_score": -40, "risk_flags": []},
+                "portfolio": {
+                    "has_position": True,
+                    "position_quantity": 400,
+                    "position_cost_price": 23.85,
+                    "current_price": 23.80,
+                    "total_value": 100000,
+                },
+            }
+
+            result = await agent.analyze(context)
+
+            assert result.signal == SignalType.SELL
+            assert result.metadata["trade_quantity"] == 120  # 30% of 400 = 120
+            assert result.metadata["position_action"] == "reduce_position"
+            assert "减仓" in result.reasoning
+
+    @pytest.mark.asyncio
+    async def test_sell_without_position_returns_no_action(self):
+        """Test SELL without position returns no_action."""
+        with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
+            agent = PortfolioManagerAgent()
+
+            context = {
+                "code": "000338",
+                "stock_name": "潍柴动力",
+                "agent_signals": {
+                    "TechnicalAgent": {"signal": "sell", "confidence": 80},
+                },
+                "risk_manager_signal": {"metadata": {"max_position_size": 1.0}},
+                "consensus_data": {"weighted_score": -80, "risk_flags": []},
+                "portfolio": {
+                    "has_position": False,
+                    "position_quantity": 0,
+                },
+            }
+
+            result = await agent.analyze(context)
+
+            assert result.signal == SignalType.SELL
+            assert result.metadata["trade_quantity"] == 0
+            assert result.metadata["position_action"] == "no_action"
+            assert result.metadata["position_ratio"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_hold_with_position_keeps_position(self):
+        """Test HOLD with existing position returns keep_position."""
+        with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
+            agent = PortfolioManagerAgent()
+
+            context = {
+                "code": "000338",
+                "stock_name": "潍柴动力",
+                "agent_signals": {
+                    "TechnicalAgent": {"signal": "hold", "confidence": 50},
+                },
+                "risk_manager_signal": {"metadata": {"max_position_size": 0.25}},
+                "consensus_data": {"weighted_score": 0, "risk_flags": []},
+                "portfolio": {
+                    "has_position": True,
+                    "position_quantity": 400,
+                    "position_cost_price": 23.85,
+                },
+            }
+
+            result = await agent.analyze(context)
+
+            assert result.signal == SignalType.HOLD
+            assert result.metadata["trade_quantity"] == 0
+            assert result.metadata["position_action"] == "keep_position"
+
+    @pytest.mark.asyncio
+    async def test_hold_without_position_returns_no_action(self):
+        """Test HOLD without position returns no_action."""
+        with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
+            agent = PortfolioManagerAgent()
+
+            context = {
+                "code": "000338",
+                "stock_name": "潍柴动力",
+                "agent_signals": {
+                    "TechnicalAgent": {"signal": "hold", "confidence": 50},
+                },
+                "risk_manager_signal": {"metadata": {"max_position_size": 0.25}},
+                "consensus_data": {"weighted_score": 0, "risk_flags": []},
+                "portfolio": {
+                    "has_position": False,
+                    "position_quantity": 0,
+                },
+            }
+
+            result = await agent.analyze(context)
+
+            assert result.signal == SignalType.HOLD
+            assert result.metadata["trade_quantity"] == 0
+            assert result.metadata["position_action"] == "no_action"
+
+    @pytest.mark.asyncio
+    async def test_buy_with_position_adds_position(self):
+        """Test BUY with existing position calculates add_position quantity."""
+        with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
+            agent = PortfolioManagerAgent()
+
+            # Total value = 100000, current position = 400 shares @ 23.80 = 9520 (9.52%)
+            # Target position ratio = 40% (confidence 50% * 0.8)
+            # Target value = 40000, target shares = 40000/23.80 = 1680
+            # Trade quantity = 1680 - 400 = 1280
+            context = {
+                "code": "000338",
+                "stock_name": "潍柴动力",
+                "agent_signals": {
+                    "TechnicalAgent": {"signal": "buy", "confidence": 50},
+                },
+                "risk_manager_signal": {"metadata": {"max_position_size": 0.5}},
+                "consensus_data": {"weighted_score": 50, "risk_flags": []},
+                "portfolio": {
+                    "has_position": True,
+                    "position_quantity": 400,
+                    "position_cost_price": 23.85,
+                    "current_price": 23.80,
+                    "total_value": 100000,
+                },
+            }
+
+            result = await agent.analyze(context)
+
+            assert result.signal == SignalType.BUY
+            assert result.metadata["trade_quantity"] > 0
+            assert result.metadata["position_action"] == "add_position"
+
+    @pytest.mark.asyncio
+    async def test_buy_without_position_opens_position(self):
+        """Test BUY without existing position calculates open_position quantity."""
+        with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
+            agent = PortfolioManagerAgent()
+
+            # Total value = 100000, target position ratio = 40%
+            # Target value = 40000, target shares = 40000/23.80 = 1680
+            context = {
+                "code": "000338",
+                "stock_name": "潍柴动力",
+                "agent_signals": {
+                    "TechnicalAgent": {"signal": "buy", "confidence": 50},
+                },
+                "risk_manager_signal": {"metadata": {"max_position_size": 0.5}},
+                "consensus_data": {"weighted_score": 50, "risk_flags": []},
+                "portfolio": {
+                    "has_position": False,
+                    "position_quantity": 0,
+                    "current_price": 23.80,
+                    "total_value": 100000,
+                },
+            }
+
+            result = await agent.analyze(context)
+
+            assert result.signal == SignalType.BUY
+            assert result.metadata["trade_quantity"] > 0
+            assert result.metadata["position_action"] == "open_position"
+
+    def test_make_rule_based_decision_sell_with_portfolio(self):
+        """Test rule-based SELL decision with portfolio context."""
+        with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
+            agent = PortfolioManagerAgent()
+
+            result = agent._make_rule_based_decision(
+                agent_signals={"Test": {"signal": "sell", "confidence": 80}},
+                consensus_data={"weighted_score": -80, "risk_flags": []},
+                max_position=1.0,
+                portfolio={
+                    "has_position": True,
+                    "position_quantity": 400,
+                },
+            )
+
+            assert result["action"] == "SELL"
+            assert result["trade_quantity"] == 400
+            assert result["position_action"] == "close_position"
+            assert "清仓" in result["reasoning"]
+
+    def test_make_rule_based_decision_sell_without_portfolio(self):
+        """Test rule-based SELL decision without portfolio context."""
+        with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
+            agent = PortfolioManagerAgent()
+
+            result = agent._make_rule_based_decision(
+                agent_signals={"Test": {"signal": "sell", "confidence": 80}},
+                consensus_data={"weighted_score": -80, "risk_flags": []},
+                max_position=1.0,
+                portfolio=None,
+            )
+
+            assert result["action"] == "SELL"
+            assert result["trade_quantity"] == 0
+            assert result["position_action"] == "no_action"

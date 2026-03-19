@@ -84,6 +84,29 @@ ANALYZE_SIGNAL_TOOL: dict[str, Any] = {
                         # Portfolio Manager fields
                         "action": {"type": "string"},
                         "position_ratio": {"type": "number"},
+                        "trade_quantity": {
+                            "type": "integer",
+                            "description": (
+                                "Number of shares to trade. For BUY: shares to purchase. "
+                                "For SELL: shares to sell (positive number). 0 if HOLD or no action needed."
+                            ),
+                        },
+                        "position_action": {
+                            "type": "string",
+                            "enum": [
+                                "open_position",
+                                "add_position",
+                                "reduce_position",
+                                "close_position",
+                                "keep_position",
+                                "no_action",
+                            ],
+                            "description": (
+                                "Type of position action: open_position (new), add_position (increase), "
+                                "reduce_position (partial exit), close_position (full exit), "
+                                "keep_position (maintain), no_action (do nothing)"
+                            ),
+                        },
                     },
                 },
             },

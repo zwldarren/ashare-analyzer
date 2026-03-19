@@ -611,3 +611,61 @@ def get_current_price(realtime_quote: "UnifiedRealtimeQuote | None", daily_data:
     if daily_data is not None and not daily_data.empty and "close" in daily_data.columns:
         return float(daily_data["close"].iloc[-1])
     return 0.0
+
+
+async def build_portfolio_context(
+    portfolio_service: Any,
+    stock_code: str,
+    current_price: float = 0.0,
+) -> dict[str, Any]:
+    """Build portfolio context for analysis.
+
+    Args:
+        portfolio_service: PortfolioService instance
+        stock_code: Current stock being analyzed
+        current_price: Current stock price (for position value calculation)
+
+    Returns:
+        Dict with portfolio information for decision context
+    """
+    try:
+        positions = await portfolio_service.get_positions()
+
+        total_value = sum(p.market_value or 0 for p in positions)
+
+        current_position = next(
+            (p for p in positions if p.code == stock_code),
+            None,
+        )
+
+        # Calculate current price from position if available
+        if current_position and current_position.current_price:
+            current_price = current_position.current_price
+
+        # Calculate profit/loss for current position
+        profit_loss_pct = None
+        if current_position:
+            profit_loss_pct = current_position.profit_loss_pct
+
+        return {
+            "positions": [p.to_dict() for p in positions],
+            "total_value": total_value,
+            "has_position": current_position is not None,
+            "position_quantity": current_position.quantity if current_position else 0,
+            "position_cost_price": current_position.cost_price if current_position else 0.0,
+            "current_price": current_price,
+            "current_position_ratio": (
+                (current_position.market_value or 0) / total_value if total_value > 0 and current_position else 0
+            ),
+            "current_profit_loss_pct": profit_loss_pct,
+        }
+    except Exception as e:
+        logger.warning(f"Failed to build portfolio context: {e}")
+        return {
+            "positions": [],
+            "total_value": 0,
+            "has_position": False,
+            "current_position_ratio": 0,
+            "current_profit_loss_pct": None,
+            "current_price": 0.0,
+        }

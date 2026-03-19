@@ -254,3 +254,31 @@ class AnalysisHistory(Base):
             "news_content": self.news_content,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class PortfolioState(Base):
+    """
+    Portfolio position state model.
+
+    Stores current holdings for position tracking.
+    """
+
+    __tablename__ = "portfolio_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, unique=True, index=True)
+    quantity = Column(Integer, nullable=False)
+    cost_price = Column(Float, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    def __repr__(self) -> str:
+        return f"<PortfolioState(code={self.code}, quantity={self.quantity}, cost_price={self.cost_price})>"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "code": self.code,
+            "quantity": self.quantity,
+            "cost_price": self.cost_price,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
