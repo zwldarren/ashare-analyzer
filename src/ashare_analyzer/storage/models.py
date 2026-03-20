@@ -282,3 +282,81 @@ class PortfolioState(Base):
             "cost_price": self.cost_price,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class TradeHistory(Base):
+    """
+    Trade history record model.
+
+    Stores all trade decisions for backtesting, auditing, and learning.
+    Supports both paper trading and live trading modes.
+    """
+
+    __tablename__ = "trade_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Trade basic info
+    code = Column(String(10), nullable=False, index=True)
+    name = Column(String(50))
+    action = Column(String(10), nullable=False)  # BUY / SELL
+    quantity = Column(Integer, nullable=False)
+    price = Column(Float)
+    executed_at = Column(DateTime, default=datetime.now, index=True)
+
+    # Decision context (for traceability)
+    signal_source = Column(String(50))  # llm / rule_based
+    confidence = Column(Integer)
+    weighted_score = Column(Float)
+    position_action = Column(String(20))  # open/add/reduce/close/keep
+
+    # Agent signals snapshot (JSON)
+    agent_signals = Column(Text)  # JSON string: {"TechnicalAgent": "BUY(80)", ...}
+
+    # Execution status
+    status = Column(String(20), default="pending", index=True)  # pending / executed / cancelled
+    result_pnl = Column(Float)  # Realized PnL (updated after execution)
+
+    # Paper vs Live trading
+    is_paper = Column(Integer, default=1)  # 1=paper, 0=live
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.now, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        Index("ix_trade_code_time", "code", "created_at"),
+        Index("ix_trade_status_time", "status", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TradeHistory(id={self.id}, code={self.code}, action={self.action}, qty={self.quantity})>"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        import contextlib
+        import json
+
+        agent_signals_dict = {}
+        if self.agent_signals:
+            with contextlib.suppress(json.JSONDecodeError):
+                agent_signals_dict = json.loads(str(self.agent_signals))
+
+        return {
+            "id": self.id,
+            "code": self.code,
+            "name": self.name,
+            "action": self.action,
+            "quantity": self.quantity,
+            "price": self.price,
+            "executed_at": self.executed_at.isoformat() if self.executed_at else None,
+            "signal_source": self.signal_source,
+            "confidence": self.confidence,
+            "weighted_score": self.weighted_score,
+            "position_action": self.position_action,
+            "agent_signals": agent_signals_dict,
+            "status": self.status,
+            "result_pnl": self.result_pnl,
+            "is_paper": bool(self.is_paper),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

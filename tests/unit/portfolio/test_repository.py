@@ -9,7 +9,10 @@ from ashare_analyzer.storage import DatabaseManager
 @pytest.fixture
 def db_manager():
     """Create in-memory database for testing."""
-    return DatabaseManager("sqlite:///:memory:")
+    # Reset singleton to ensure fresh database for each test
+    DatabaseManager._instance = None
+    yield DatabaseManager("sqlite:///:memory:")
+    DatabaseManager._instance = None
 
 
 @pytest.fixture

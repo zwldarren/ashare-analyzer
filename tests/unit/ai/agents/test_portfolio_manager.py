@@ -59,6 +59,11 @@ class TestPortfolioManagerAgent:
                 },
                 "risk_manager_signal": {"metadata": {"max_position_size": 0.25}},
                 "consensus_data": {"weighted_score": 50, "risk_flags": []},
+                "portfolio": {
+                    "has_position": False,
+                    "current_price": 1800.0,  # Required for quantity calculation
+                    "total_value": 100000.0,  # Required for quantity calculation
+                },
             }
 
             result = await agent.analyze(context)
@@ -96,7 +101,10 @@ class TestPortfolioManagerAgent:
             assert result.confidence > 0
             assert "卖出" in result.reasoning or "看空" in result.reasoning
             assert result.metadata["action"] == "SELL"
-            assert result.metadata["position_ratio"] == 1.0  # Full exit
+            # With PositionSizer, SELL means target position ratio = 0
+            assert result.metadata["position_ratio"] == 0.0
+            # Position action should be close_position or reduce_position
+            assert result.metadata["position_action"] in ["close_position", "reduce_position"]
 
     @pytest.mark.asyncio
     async def test_analyze_hold_decision_rule_based(self):
@@ -140,6 +148,11 @@ class TestPortfolioManagerAgent:
                 },
                 "risk_manager_signal": {"metadata": {"max_position_size": 0.10}},  # 10% limit
                 "consensus_data": {"weighted_score": 90, "risk_flags": []},
+                "portfolio": {
+                    "has_position": False,
+                    "current_price": 1800.0,
+                    "total_value": 100000.0,
+                },
             }
 
             result = await agent.analyze(context)
@@ -360,6 +373,11 @@ class TestPortfolioManagerHelpers:
                 agent_signals={"Test": {"signal": "buy", "confidence": 50}},
                 consensus_data={"weighted_score": 30, "risk_flags": []},
                 max_position=0.25,
+                portfolio={
+                    "has_position": False,
+                    "current_price": 100.0,
+                    "total_value": 100000.0,
+                },
             )
 
             assert result["action"] == "BUY"
@@ -374,10 +392,12 @@ class TestPortfolioManagerHelpers:
                 agent_signals={"Test": {"signal": "sell", "confidence": 50}},
                 consensus_data={"weighted_score": -30, "risk_flags": []},
                 max_position=0.25,
+                portfolio={"has_position": True, "position_quantity": 100, "total_value": 10000, "current_price": 100},
             )
 
             assert result["action"] == "SELL"
             assert result["confidence"] == 30  # abs(-30)
+            assert result["position_action"] in ["close_position", "reduce_position"]
 
     def test_make_rule_based_decision_hold_range(self):
         """Test rule-based decision in HOLD range (-29 to 29)."""
@@ -525,7 +545,8 @@ class TestTradeQuantityCalculation:
 
             result = await agent.analyze(context)
 
-            assert result.signal == SignalType.SELL
+            # SELL without position → HOLD (can't sell what you don't have)
+            assert result.signal == SignalType.HOLD
             assert result.metadata["trade_quantity"] == 0
             assert result.metadata["position_action"] == "no_action"
             assert result.metadata["position_ratio"] == 0.0
@@ -667,7 +688,7 @@ class TestTradeQuantityCalculation:
             assert "清仓" in result["reasoning"]
 
     def test_make_rule_based_decision_sell_without_portfolio(self):
-        """Test rule-based SELL decision without portfolio context."""
+        """Test rule-based SELL decision without portfolio context (no position)."""
         with patch("ashare_analyzer.ai.agents.portfolio_manager.get_llm_client", return_value=None):
             agent = PortfolioManagerAgent()
 
@@ -678,6 +699,7 @@ class TestTradeQuantityCalculation:
                 portfolio=None,
             )
 
-            assert result["action"] == "SELL"
+            # SELL without position → HOLD (can't sell what you don't have)
+            assert result["action"] == "HOLD"
             assert result["trade_quantity"] == 0
             assert result["position_action"] == "no_action"

@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 from ashare_analyzer.ai.clients import get_llm_client
 from ashare_analyzer.ai.tools import ANALYZE_SIGNAL_TOOL
 from ashare_analyzer.models import AgentSignal, SignalType
+from ashare_analyzer.portfolio.models import Portfolio, Position
+from ashare_analyzer.portfolio.position_sizer import PositionSizer
 
 from .base import BaseAgent
 
@@ -108,11 +110,16 @@ class PortfolioManagerAgent(BaseAgent):
         })
     """
 
-    def __init__(self):
-        """Initialize the Portfolio Manager Agent."""
+    def __init__(self, position_sizer: PositionSizer | None = None):
+        """Initialize the Portfolio Manager Agent.
+
+        Args:
+            position_sizer: Optional PositionSizer instance. Creates default if None.
+        """
         super().__init__("PortfolioManagerAgent")
         self._logger = logging.getLogger(__name__)
         self._llm_client: LiteLLMClient | None = None
+        self._position_sizer = position_sizer or PositionSizer()
         self._init_llm_client()
 
     def _init_llm_client(self) -> None:
@@ -283,7 +290,7 @@ class PortfolioManagerAgent(BaseAgent):
         max_position: float,
         portfolio: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Fallback rule-based decision.
+        """Fallback rule-based decision using PositionSizer.
 
         Args:
             agent_signals: Signals from all analysis agents
@@ -302,13 +309,7 @@ class PortfolioManagerAgent(BaseAgent):
         sell_count = sum(1 for s in agent_signals.values() if s.get("signal", "").lower() == "sell")
         total_agents = len(agent_signals)
 
-        # Extract portfolio information
-        has_position = portfolio.get("has_position", False) if portfolio else False
-        position_quantity = portfolio.get("position_quantity", 0) if portfolio else 0
-        total_value = portfolio.get("total_value", 0) if portfolio else 0
-        current_price = portfolio.get("current_price", 0) if portfolio else 0
-
-        # Determine action
+        # Determine action based on weighted score
         if weighted_score >= 30:
             action = "BUY"
             reasoning = "综合信号看多，建议买入"
@@ -325,60 +326,31 @@ class PortfolioManagerAgent(BaseAgent):
             confidence = max(30, confidence - len(risk_flags) * 10)
             reasoning += f"（注意{len(risk_flags)}个风险点）"
 
-        # Calculate position ratio and trade quantity
-        trade_quantity = 0
-        position_action = "no_action"
+        # Build portfolio/position context for PositionSizer
+        position: Position | None = None
+        portfolio_obj: Portfolio | None = None
+        total_value = portfolio.get("total_value", 0) if portfolio else 0
+        current_price = portfolio.get("current_price", 0) if portfolio else 0
 
-        if action == "BUY":
-            base_position = confidence / 100 * 0.8
-            position_ratio = min(base_position, max_position)
+        if portfolio and portfolio.get("has_position"):
+            position = Position(
+                code=portfolio.get("code", ""),
+                quantity=portfolio.get("position_quantity", 0),
+                cost_price=portfolio.get("position_cost_price", 0),
+            )
+            portfolio_obj = Portfolio(positions=[position], total_value=total_value)
 
-            # Calculate trade quantity for BUY
-            if total_value > 0 and current_price > 0:
-                target_value = total_value * position_ratio
-                target_shares = int(target_value / current_price)
-                if has_position:
-                    # Add to existing position
-                    trade_quantity = max(0, target_shares - position_quantity)
-                    position_action = "add_position" if trade_quantity > 0 else "keep_position"
-                else:
-                    # New position
-                    trade_quantity = target_shares
-                    position_action = "open_position"
-            else:
-                # No portfolio info, use position ratio only
-                position_action = "open_position"
-
-        elif action == "SELL":
-            position_ratio = 1.0  # Full exit for SELL
-
-            # Calculate trade quantity for SELL
-            if has_position and position_quantity > 0:
-                # Determine sell percentage based on confidence
-                # Higher confidence = sell more
-                if confidence >= 70:
-                    # High confidence: close entire position
-                    trade_quantity = position_quantity
-                    position_action = "close_position"
-                    reasoning += "，建议清仓"
-                elif confidence >= 50:
-                    # Medium confidence: sell 50% of position
-                    trade_quantity = int(position_quantity * 0.5)
-                    position_action = "reduce_position"
-                    reasoning += "，建议减半仓"
-                else:
-                    # Low confidence: sell 30% of position
-                    trade_quantity = int(position_quantity * 0.3)
-                    position_action = "reduce_position"
-                    reasoning += "，建议减仓"
-            else:
-                # No position, nothing to sell
-                position_action = "no_action"
-                position_ratio = 0.0
-        else:
-            # HOLD
-            position_ratio = 0.0
-            position_action = "keep_position" if has_position else "no_action"
+        # Use PositionSizer for position calculation
+        # PositionSizer handles edge cases (missing price/value) gracefully
+        decision = self._position_sizer.calculate(
+            signal=action,
+            confidence=confidence,
+            portfolio=portfolio_obj,
+            position=position,
+            current_price=current_price,
+            total_value=total_value,
+            max_position_limit=max_position,
+        )
 
         # Build risk assessment based on agent signals
         concerns = []
@@ -400,12 +372,12 @@ class PortfolioManagerAgent(BaseAgent):
             risk_level = "low"
 
         return {
-            "action": action,
+            "action": decision.action,
             "confidence": confidence,
-            "position_ratio": position_ratio,
-            "trade_quantity": trade_quantity,
-            "position_action": position_action,
-            "reasoning": reasoning,
+            "position_ratio": decision.position_ratio,
+            "trade_quantity": decision.trade_quantity,
+            "position_action": decision.position_action,
+            "reasoning": f"{reasoning} - {decision.reasoning}",
             "key_factors": [f"加权得分: {weighted_score:.1f}"],
             "risk_level": risk_level,
             "risk_assessment": {
