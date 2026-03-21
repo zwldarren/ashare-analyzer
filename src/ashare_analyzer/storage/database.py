@@ -215,53 +215,31 @@ class DatabaseManager:
             return 0
 
         saved_count = 0
+        fields = ["open", "high", "low", "close", "volume", "amount", "pct_chg", "ma5", "ma10", "ma20", "volume_ratio"]
 
         with self.get_session() as session:
             try:
                 for _, row in df.iterrows():
-                    # 解析日期
                     row_date = row.get("date")
                     if isinstance(row_date, str):
                         row_date = datetime.strptime(row_date, "%Y-%m-%d").date()
                     elif isinstance(row_date, (datetime, pd.Timestamp)):
                         row_date = row_date.date()
 
-                    # 检查是否已存在
                     existing = session.execute(
                         select(StockDaily).where(and_(StockDaily.code == code, StockDaily.date == row_date))
                     ).scalar_one_or_none()
 
                     if existing:
-                        # 更新现有记录
-                        existing.open = row.get("open")
-                        existing.high = row.get("high")
-                        existing.low = row.get("low")
-                        existing.close = row.get("close")
-                        existing.volume = row.get("volume")
-                        existing.amount = row.get("amount")
-                        existing.pct_chg = row.get("pct_chg")
-                        existing.ma5 = row.get("ma5")
-                        existing.ma10 = row.get("ma10")
-                        existing.ma20 = row.get("ma20")
-                        existing.volume_ratio = row.get("volume_ratio")
+                        for field in fields:
+                            setattr(existing, field, row.get(field))
                         existing.data_source = data_source
                         existing.updated_at = datetime.now()
                     else:
-                        # 创建新记录
                         record = StockDaily(
                             code=code,
                             date=row_date,
-                            open=row.get("open"),
-                            high=row.get("high"),
-                            low=row.get("low"),
-                            close=row.get("close"),
-                            volume=row.get("volume"),
-                            amount=row.get("amount"),
-                            pct_chg=row.get("pct_chg"),
-                            ma5=row.get("ma5"),
-                            ma10=row.get("ma10"),
-                            ma20=row.get("ma20"),
-                            volume_ratio=row.get("volume_ratio"),
+                            **{field: row.get(field) for field in fields},
                             data_source=data_source,
                         )
                         session.add(record)
@@ -320,7 +298,6 @@ class DatabaseManager:
             return False
 
         try:
-            # 解析日期
             chip_date = chip_data.get("date")
             if isinstance(chip_date, str):
                 chip_date = datetime.strptime(chip_date, "%Y-%m-%d").date()
@@ -329,38 +306,33 @@ class DatabaseManager:
             elif chip_date is None:
                 chip_date = date.today()
 
+            fields = [
+                "profit_ratio",
+                "avg_cost",
+                "cost_90_low",
+                "cost_90_high",
+                "concentration_90",
+                "cost_70_low",
+                "cost_70_high",
+                "concentration_70",
+            ]
+
             with self.get_session() as session:
-                # 检查是否已存在
                 existing = session.execute(
                     select(ChipData).where(and_(ChipData.code == code, ChipData.date == chip_date))
                 ).scalar_one_or_none()
 
                 if existing:
-                    # 更新现有记录
-                    existing.profit_ratio = chip_data.get("profit_ratio", 0.0)
-                    existing.avg_cost = chip_data.get("avg_cost", 0.0)
-                    existing.cost_90_low = chip_data.get("cost_90_low", 0.0)
-                    existing.cost_90_high = chip_data.get("cost_90_high", 0.0)
-                    existing.concentration_90 = chip_data.get("concentration_90", 0.0)
-                    existing.cost_70_low = chip_data.get("cost_70_low", 0.0)
-                    existing.cost_70_high = chip_data.get("cost_70_high", 0.0)
-                    existing.concentration_70 = chip_data.get("concentration_70", 0.0)
+                    for field in fields:
+                        setattr(existing, field, chip_data.get(field, 0.0))
                     existing.data_source = data_source
                     existing.updated_at = datetime.now()
                     logger.debug(f"更新 {code} 筹码数据: {chip_date}")
                 else:
-                    # 创建新记录
                     record = ChipData(
                         code=code,
                         date=chip_date,
-                        profit_ratio=chip_data.get("profit_ratio", 0.0),
-                        avg_cost=chip_data.get("avg_cost", 0.0),
-                        cost_90_low=chip_data.get("cost_90_low", 0.0),
-                        cost_90_high=chip_data.get("cost_90_high", 0.0),
-                        concentration_90=chip_data.get("concentration_90", 0.0),
-                        cost_70_low=chip_data.get("cost_70_low", 0.0),
-                        cost_70_high=chip_data.get("cost_70_high", 0.0),
-                        concentration_70=chip_data.get("concentration_70", 0.0),
+                        **{field: chip_data.get(field, 0.0) for field in fields},
                         data_source=data_source,
                     )
                     session.add(record)

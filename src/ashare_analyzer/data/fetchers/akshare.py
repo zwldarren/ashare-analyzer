@@ -25,6 +25,8 @@ AkshareFetcher - 主数据源 (Priority 1)
 import asyncio
 import logging
 import random
+import time
+from collections.abc import Callable
 from typing import Any, cast
 
 import pandas as pd
@@ -49,6 +51,24 @@ logger = logging.getLogger(__name__)
 
 _realtime_cache: TTLCache[str, Any] = TTLCache(maxsize=1, ttl=1200)
 _etf_realtime_cache: TTLCache[str, Any] = TTLCache(maxsize=1, ttl=1200)
+
+RATE_LIMIT_KEYWORDS = ("banned", "blocked", "频率", "rate", "限制")
+
+
+async def timed_api_call(api_func: Callable[[], Any], log_name: str) -> Any:
+    """Execute sync API function in thread pool with timing and logging."""
+    start = time.time()
+    result = await asyncio.to_thread(api_func)
+    elapsed = time.time() - start
+    logger.debug(f"[API返回] {log_name} 成功, 耗时 {elapsed:.2f}s")
+    return result
+
+
+def check_rate_limit_error(e: Exception, source: str = "Akshare") -> None:
+    """Raise RateLimitError if error indicates rate limiting."""
+    if any(kw in str(e).lower() for kw in RATE_LIMIT_KEYWORDS):
+        logger.warning(f"检测到可能被封禁: {e}")
+        raise RateLimitError(f"{source} 可能被限流: {e}") from e
 
 
 class AkshareFetcher(BaseFetcher):
@@ -123,34 +143,25 @@ class AkshareFetcher(BaseFetcher):
         logger.debug(f"[API调用] ak.stock_zh_a_hist(symbol={stock_code}, ...)")
 
         try:
-            import time as _time
-
-            api_start = _time.time()
-
-            def _call_api():
-                return ak.stock_zh_a_hist(
+            df = await timed_api_call(
+                lambda: ak.stock_zh_a_hist(
                     symbol=stock_code,
                     period="daily",
                     start_date=start_date.replace("-", ""),
                     end_date=end_date.replace("-", ""),
                     adjust="qfq",
-                )
-
-            df = await asyncio.to_thread(_call_api)
-            api_elapsed = _time.time() - api_start
+                ),
+                f"ak.stock_zh_a_hist({stock_code})",
+            )
 
             if df is not None and not df.empty:
-                logger.debug(f"[API返回] ak.stock_zh_a_hist 成功: {len(df)} 行, 耗时 {api_elapsed:.2f}s")
                 return df
-            else:
-                logger.warning("[API返回] ak.stock_zh_a_hist 返回空数据")
-                return pd.DataFrame()
+            logger.warning("[API返回] ak.stock_zh_a_hist 返回空数据")
+            return pd.DataFrame()
 
         except Exception as e:
-            error_msg = str(e).lower()
-            if any(keyword in error_msg for keyword in ["banned", "blocked", "频率", "rate", "限制"]):
-                raise RateLimitError(f"Akshare(EM) 可能被限流: {e}") from e
-            raise e
+            check_rate_limit_error(e, "Akshare(EM)")
+            raise
 
     async def _fetch_stock_data_sina(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         import akshare as ak
@@ -250,36 +261,23 @@ class AkshareFetcher(BaseFetcher):
         )
 
         try:
-            import time as _time
-
-            api_start = _time.time()
-
-            def _call_api():
-                return ak.fund_etf_hist_em(
+            df = await timed_api_call(
+                lambda: ak.fund_etf_hist_em(
                     symbol=stock_code,
                     period="daily",
                     start_date=start_date.replace("-", ""),
                     end_date=end_date.replace("-", ""),
                     adjust="qfq",
-                )
+                ),
+                f"ak.fund_etf_hist_em({stock_code})",
+            )
 
-            df = await asyncio.to_thread(_call_api)
-            api_elapsed = _time.time() - api_start
-
-            if df is not None and not df.empty:
-                logger.debug(f"[API返回] ak.fund_etf_hist_em 成功: 返回 {len(df)} 行数据, 耗时 {api_elapsed:.2f}s")
-            else:
-                logger.warning(f"[API返回] ak.fund_etf_hist_em 返回空数据, 耗时 {api_elapsed:.2f}s")
-
-            return df
+            if df is None or df.empty:
+                logger.warning("[API返回] ak.fund_etf_hist_em 返回空数据")
+            return df if df is not None else pd.DataFrame()
 
         except Exception as e:
-            error_msg = str(e).lower()
-
-            if any(keyword in error_msg for keyword in ["banned", "blocked", "频率", "rate", "限制"]):
-                logger.warning(f"检测到可能被封禁: {e}")
-                raise RateLimitError(f"Akshare 可能被限流: {e}") from e
-
+            check_rate_limit_error(e, "Akshare")
             raise DataFetchError(f"Akshare 获取 ETF 数据失败: {e}") from e
 
     async def _fetch_us_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -293,19 +291,12 @@ class AkshareFetcher(BaseFetcher):
         logger.debug(f"[API调用] ak.stock_us_daily(symbol={symbol}, adjust=qfq)")
 
         try:
-            import time as _time
-
-            api_start = _time.time()
-
-            def _call_api():
-                return ak.stock_us_daily(symbol=symbol, adjust="qfq")
-
-            df = await asyncio.to_thread(_call_api)
-            api_elapsed = _time.time() - api_start
+            df = await timed_api_call(
+                lambda: ak.stock_us_daily(symbol=symbol, adjust="qfq"),
+                f"ak.stock_us_daily({symbol})",
+            )
 
             if df is not None and not df.empty:
-                logger.debug(f"[API返回] ak.stock_us_daily 成功: 返回 {len(df)} 行数据, 耗时 {api_elapsed:.2f}s")
-
                 df["date"] = pd.to_datetime(df["date"])
                 start_dt = pd.to_datetime(start_date)
                 end_dt = pd.to_datetime(end_date)
@@ -331,17 +322,12 @@ class AkshareFetcher(BaseFetcher):
                     df["成交额"] = 0
 
                 return df
-            else:
-                logger.warning(f"[API返回] ak.stock_us_daily 返回空数据, 耗时 {api_elapsed:.2f}s")
-                return pd.DataFrame()
+
+            logger.warning("[API返回] ak.stock_us_daily 返回空数据")
+            return pd.DataFrame()
 
         except Exception as e:
-            error_msg = str(e).lower()
-
-            if any(keyword in error_msg for keyword in ["banned", "blocked", "频率", "rate", "限制"]):
-                logger.warning(f"检测到可能被封禁: {e}")
-                raise RateLimitError(f"Akshare 可能被限流: {e}") from e
-
+            check_rate_limit_error(e, "Akshare")
             raise DataFetchError(f"Akshare 获取美股数据失败: {e}") from e
 
     async def _fetch_hk_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -358,36 +344,23 @@ class AkshareFetcher(BaseFetcher):
         )
 
         try:
-            import time as _time
-
-            api_start = _time.time()
-
-            def _call_api():
-                return ak.stock_hk_hist(
+            df = await timed_api_call(
+                lambda: ak.stock_hk_hist(
                     symbol=code,
                     period="daily",
                     start_date=start_date.replace("-", ""),
                     end_date=end_date.replace("-", ""),
                     adjust="qfq",
-                )
+                ),
+                f"ak.stock_hk_hist({code})",
+            )
 
-            df = await asyncio.to_thread(_call_api)
-            api_elapsed = _time.time() - api_start
-
-            if df is not None and not df.empty:
-                logger.debug(f"[API返回] ak.stock_hk_hist 成功: 返回 {len(df)} 行数据, 耗时 {api_elapsed:.2f}s")
-            else:
-                logger.warning(f"[API返回] ak.stock_hk_hist 返回空数据, 耗时 {api_elapsed:.2f}s")
-
-            return df
+            if df is None or df.empty:
+                logger.warning("[API返回] ak.stock_hk_hist 返回空数据")
+            return df if df is not None else pd.DataFrame()
 
         except Exception as e:
-            error_msg = str(e).lower()
-
-            if any(keyword in error_msg for keyword in ["banned", "blocked", "频率", "rate", "限制"]):
-                logger.warning(f"检测到可能被封禁: {e}")
-                raise RateLimitError(f"Akshare 可能被限流: {e}") from e
-
+            check_rate_limit_error(e, "Akshare")
             raise DataFetchError(f"Akshare 获取港股数据失败: {e}") from e
 
     def _normalize_data(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:

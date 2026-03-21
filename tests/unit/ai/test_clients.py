@@ -66,7 +66,18 @@ class TestLiteLLMClientGenerateWithTool:
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.tool_calls = None
 
-        with patch("ashare_analyzer.ai.clients.acompletion", new_callable=AsyncMock, return_value=mock_response):
+        # Mock config to reduce retry count and delay for faster test execution
+        mock_config = MagicMock()
+        mock_config.ai.llm_max_retries = 1
+        mock_config.ai.llm_retry_delay = 0.01
+        mock_config.ai.llm_timeout = 30
+        mock_config.ai.llm_temperature = 0.2
+        mock_config.ai.llm_max_tokens = 1000
+
+        with (
+            patch("ashare_analyzer.ai.clients.acompletion", new_callable=AsyncMock, return_value=mock_response),
+            patch("ashare_analyzer.ai.clients.get_config", return_value=mock_config),
+        ):
             result = await client.generate_with_tool(
                 prompt="test prompt",
                 tool=tool,

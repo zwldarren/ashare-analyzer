@@ -14,7 +14,7 @@ class StockType(Enum):
     UNKNOWN = "unknown"
 
 
-def detect_stock_type(code: str) -> StockType:
+def detect_stock_type(code: str | None) -> StockType:
     """检测股票类型"""
     if not code:
         return StockType.UNKNOWN

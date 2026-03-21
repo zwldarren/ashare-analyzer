@@ -384,12 +384,10 @@ async def build_valuation_context(
     valuation_data: dict[str, Any] = {}
 
     if realtime_quote:
-        pe = realtime_quote.pe_ratio
-        pb = realtime_quote.pb_ratio
-        if pe is not None and pe > 0:
-            valuation_data["pe_ratio"] = float(pe)
-        if pb is not None and pb > 0:
-            valuation_data["pb_ratio"] = float(pb)
+        if realtime_quote.pe_ratio is not None and realtime_quote.pe_ratio > 0:
+            valuation_data["pe_ratio"] = float(realtime_quote.pe_ratio)
+        if realtime_quote.pb_ratio is not None and realtime_quote.pb_ratio > 0:
+            valuation_data["pb_ratio"] = float(realtime_quote.pb_ratio)
 
     alt_quote = await _backfill_valuation_multiples(valuation_data, realtime_quote, data_service, stock_code)
 
@@ -461,14 +459,11 @@ async def build_financial_context(
     """
     financial_data: dict[str, Any] = {}
 
-    # 1. 从实时行情获取基础数据
     if realtime_quote:
-        pe = realtime_quote.pe_ratio
-        pb = realtime_quote.pb_ratio
-        if pe is not None:
-            financial_data["pe_ratio"] = float(pe)
-        if pb is not None:
-            financial_data["pb_ratio"] = float(pb)
+        if realtime_quote.pe_ratio is not None:
+            financial_data["pe_ratio"] = float(realtime_quote.pe_ratio)
+        if realtime_quote.pb_ratio is not None:
+            financial_data["pb_ratio"] = float(realtime_quote.pb_ratio)
 
     # 2. 计算波动率
     if daily_data is not None and not daily_data.empty and "close" in daily_data.columns:
@@ -487,31 +482,20 @@ async def build_financial_context(
         try:
             indicators = await data_service.get_financial_indicators(stock_code)
             if indicators:
-                # 盈利能力
-                if indicators.get("roe") is not None:
-                    financial_data["roe"] = indicators["roe"]
-                if indicators.get("roa") is not None:
-                    financial_data["roa"] = indicators["roa"]
-                if indicators.get("net_margin") is not None:
-                    financial_data["net_margin"] = indicators["net_margin"]
-                if indicators.get("gross_margin") is not None:
-                    financial_data["gross_margin"] = indicators["gross_margin"]
-
-                # 成长性
-                if indicators.get("revenue_growth") is not None:
-                    financial_data["revenue_growth"] = indicators["revenue_growth"]
-                if indicators.get("earnings_growth") is not None:
-                    financial_data["earnings_growth"] = indicators["earnings_growth"]
-
-                # 财务健康
-                if indicators.get("debt_ratio") is not None:
-                    financial_data["debt_to_equity"] = indicators["debt_ratio"]
-                if indicators.get("current_ratio") is not None:
-                    financial_data["current_ratio"] = indicators["current_ratio"]
-
-                # 估值相关
-                if indicators.get("dividend_yield") is not None:
-                    financial_data["dividend_yield"] = indicators["dividend_yield"]
+                indicator_mapping = {
+                    "roe": "roe",
+                    "roa": "roa",
+                    "net_margin": "net_margin",
+                    "gross_margin": "gross_margin",
+                    "revenue_growth": "revenue_growth",
+                    "earnings_growth": "earnings_growth",
+                    "debt_ratio": "debt_to_equity",
+                    "current_ratio": "current_ratio",
+                    "dividend_yield": "dividend_yield",
+                }
+                for src_key, dst_key in indicator_mapping.items():
+                    if indicators.get(src_key) is not None:
+                        financial_data[dst_key] = indicators[src_key]
 
                 logger.debug(
                     f"[{stock_code}] 财务指标: ROE={indicators.get('roe')}%, "

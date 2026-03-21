@@ -27,6 +27,22 @@ litellm.set_verbose = False
 litellm.drop_params = True
 
 
+def _classify_error(error_str: str) -> tuple[bool, bool]:
+    """Classify error as rate limit or server error."""
+    is_rate_limit = any(s in error_str.lower() for s in ("429", "rate", "quota"))
+    is_server_error = any(s in error_str for s in ("524", "500", "502", "503"))
+    return is_rate_limit, is_server_error
+
+
+def _log_error(model_name: str, error: Exception, attempt: int, max_retries: int) -> None:
+    """Log API error with appropriate severity."""
+    error_str = str(error)
+    is_rate_limit, is_server_error = _classify_error(error_str)
+    error_type = "API 限流" if is_rate_limit else "服务器错误" if is_server_error else "API 调用失败"
+    logger_func = logger.warning if is_rate_limit or is_server_error else logger.error
+    logger_func(f"[{model_name}] {error_type}，第 {attempt + 1}/{max_retries} 次: {error_str[:100]}")
+
+
 DEFAULT_SYSTEM_PROMPT = """你是一位专业的A股投资分析师，擅长市场分析和投资研究。
 请基于提供的数据生成专业、客观的分析报告。
 注意：
@@ -88,6 +104,13 @@ class LiteLLMClient:
         """Check if fallback model is configured."""
         return bool(self.fallback_model and self.fallback_api_key)
 
+    def _get_models_to_try(self) -> list[tuple[str, str | None, str | None]]:
+        """Return list of (model, api_key, base_url) tuples to try."""
+        models = [(self.model, self.api_key, self.base_url)]
+        if self.has_fallback():
+            models.append((self.fallback_model, self.fallback_api_key, self.fallback_base_url))
+        return models
+
     async def generate(self, prompt: str, generation_config: dict, system_prompt: str | None = None) -> str:
         """
         生成内容，带重试机制和备用模型支持 (async)
@@ -110,28 +133,17 @@ class LiteLLMClient:
         max_retries = config.ai.llm_max_retries
         base_delay = config.ai.llm_retry_delay
         timeout = generation_config.get("timeout", config.ai.llm_timeout)
-
         temperature = generation_config.get("temperature", config.ai.llm_temperature)
         max_tokens = generation_config.get("max_output_tokens", config.ai.llm_max_tokens)
-
-        sys_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
-
         messages = [
-            {"role": "system", "content": sys_prompt},
+            {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
 
-        # Try primary model first, then fallback
-        models_to_try = [(self.model, self.api_key, self.base_url)]
-        if self.has_fallback():
-            models_to_try.append((self.fallback_model, self.fallback_api_key, self.fallback_base_url))
-
-        last_error = None
-        for model_idx, (model, api_key, base_url) in enumerate(models_to_try):
-            is_fallback = model_idx > 0
+        last_error: Exception | None = None
+        for model_idx, (model, api_key, base_url) in enumerate(self._get_models_to_try()):
             model_name = model or "unknown"
-
-            if is_fallback:
+            if model_idx > 0:
                 logger.info(f"切换到备用模型: {model_name}")
 
             for attempt in range(max_retries):
@@ -148,54 +160,29 @@ class LiteLLMClient:
                         "max_tokens": max_tokens,
                         "timeout": timeout,
                     }
-
                     if api_key:
                         kwargs["api_key"] = api_key
-
                     if base_url:
                         kwargs["api_base"] = base_url
 
                     response = await acompletion(**kwargs)
-
-                    if response and response.choices and len(response.choices) > 0:
-                        content = response.choices[0].message.content
-                        if content:
-                            if is_fallback:
-                                logger.info(f"[{model_name}] 备用模型响应成功")
-                            else:
-                                logger.debug(f"[{model_name}] LLM响应: {content[:500]}...")
-                            return content.strip()
+                    if response and response.choices and response.choices[0].message.content:
+                        content = response.choices[0].message.content.strip()
+                        if model_idx > 0:
+                            logger.info(f"[{model_name}] 备用模型响应成功")
+                        return content
 
                     raise AnalysisError(f"{model_name} 返回空响应")
 
                 except Exception as e:
-                    error_str = str(e)
-                    is_rate_limit = "429" in error_str or "rate" in error_str.lower()
-                    is_rate_limit = is_rate_limit or "quota" in error_str.lower()
-                    is_server_error = "524" in error_str or "500" in error_str
-                    is_server_error = is_server_error or "502" in error_str or "503" in error_str
-
-                    if is_rate_limit:
-                        logger.warning(
-                            f"[{model_name}] API 限流，第 {attempt + 1}/{max_retries} 次尝试: {error_str[:100]}"
-                        )
-                    elif is_server_error:
-                        logger.warning(
-                            f"[{model_name}] 服务器错误，第 {attempt + 1}/{max_retries} 次尝试: {error_str[:100]}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[{model_name}] API 调用失败，第 {attempt + 1}/{max_retries} 次尝试: {error_str[:100]}"
-                        )
-
                     last_error = e
+                    _log_error(model_name, e, attempt, max_retries)
 
-                    # Only retry on same model if we haven't exhausted retries
-                    if attempt == max_retries - 1 and not is_fallback and self.has_fallback():
-                        logger.warning(f"[{model_name}] 主模型失败，尝试备用模型...")
-                        break  # Break inner loop to try fallback model
-                    elif attempt == max_retries - 1:
-                        raise AnalysisError(f"{model_name} API 调用失败，已达最大重试次数: {error_str}") from e
+                    if attempt == max_retries - 1:
+                        if model_idx == 0 and self.has_fallback():
+                            logger.warning(f"[{model_name}] 主模型失败，尝试备用模型...")
+                            break
+                        raise AnalysisError(f"{model_name} API 调用失败，已达最大重试次数: {e}") from e
 
         raise AnalysisError(f"所有模型调用失败: {last_error}") from last_error
 
@@ -233,25 +220,15 @@ class LiteLLMClient:
         temperature = generation_config.get("temperature", config.ai.llm_temperature)
         max_tokens = generation_config.get("max_output_tokens", config.ai.llm_max_tokens)
         timeout = generation_config.get("timeout", config.ai.llm_timeout)
-
-        sys_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
-
         messages = [
-            {"role": "system", "content": sys_prompt},
+            {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
 
-        # Try primary model first, then fallback
-        models_to_try = [(self.model, self.api_key, self.base_url)]
-        if self.has_fallback():
-            models_to_try.append((self.fallback_model, self.fallback_api_key, self.fallback_base_url))
-
-        last_error = None
-        for model_idx, (model, api_key, base_url) in enumerate(models_to_try):
-            is_fallback = model_idx > 0
+        last_error: Exception | None = None
+        for model_idx, (model, api_key, base_url) in enumerate(self._get_models_to_try()):
             model_name = model or "unknown"
-
-            if is_fallback:
+            if model_idx > 0:
                 logger.info(f"切换到备用模型: {model_name}")
 
             for attempt in range(max_retries):
@@ -270,65 +247,35 @@ class LiteLLMClient:
                         "max_tokens": max_tokens,
                         "timeout": timeout,
                     }
-
                     if api_key:
                         kwargs["api_key"] = api_key
-
                     if base_url:
                         kwargs["api_base"] = base_url
 
                     response = await acompletion(**kwargs)
-
-                    if response and response.choices and len(response.choices) > 0:
+                    if response and response.choices:
                         choice = response.choices[0]
-                        if choice.message.tool_calls and len(choice.message.tool_calls) > 0:
+                        if choice.message.tool_calls:
                             tool_call = choice.message.tool_calls[0]
-                            arguments_str = tool_call.function.arguments
-                            result = json.loads(arguments_str)
-                            if is_fallback:
+                            result = json.loads(tool_call.function.arguments)
+                            if model_idx > 0:
                                 logger.info(f"[{model_name}] 备用模型 Function call 成功")
-                            else:
-                                logger.debug(f"[{model_name}] Function call result: {result}")
                             return result
-                        else:
-                            # Log when model returns text instead of tool call
-                            content_preview = ""
-                            if choice.message.content:
-                                content_preview = choice.message.content[:200]
-                            logger.warning(
-                                f"[{model_name}] No tool calls in response. "
-                                f"Model returned text instead: {content_preview}..."
-                            )
+                        if choice.message.content:
+                            logger.warning(f"[{model_name}] No tool calls, got text: {choice.message.content[:200]}...")
 
-                    logger.warning(f"[{model_name}] No tool calls in response")
                     last_error = Exception("No tool calls in response")
 
                 except json.JSONDecodeError as e:
                     logger.error(f"[{model_name}] Failed to parse tool call arguments: {e}")
                     last_error = e
                 except Exception as e:
-                    error_str = str(e)
-                    is_rate_limit = "429" in error_str or "rate" in error_str.lower()
-                    is_rate_limit = is_rate_limit or "quota" in error_str.lower()
-                    is_server_error = "524" in error_str or "500" in error_str
-                    is_server_error = is_server_error or "502" in error_str or "503" in error_str
-
-                    if is_rate_limit:
-                        logger.warning(
-                            f"[{model_name}] API 限流，第 {attempt + 1}/{max_retries} 次尝试: {error_str[:100]}"
-                        )
-                    elif is_server_error:
-                        logger.warning(
-                            f"[{model_name}] 服务器错误，第 {attempt + 1}/{max_retries} 次尝试: {error_str[:100]}"
-                        )
-                    else:
-                        logger.error(f"[{model_name}] Function call failed: {e}")
                     last_error = e
+                    _log_error(model_name, e, attempt, max_retries)
 
-                # Only retry on same model if we haven't exhausted retries
-                if attempt == max_retries - 1 and not is_fallback and self.has_fallback():
+                if attempt == max_retries - 1 and model_idx == 0 and self.has_fallback():
                     logger.warning(f"[{model_name}] 主模型失败，尝试备用模型...")
-                    break  # Break inner loop to try fallback model
+                    break
 
         logger.error(f"所有模型 generate_with_tool 调用失败: {last_error}")
         return None

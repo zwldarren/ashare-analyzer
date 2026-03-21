@@ -554,25 +554,18 @@ class Config(BaseSettings):
         get_config.cache_clear()
 
 
-@lru_cache
-def get_config() -> Config:
-    """Get cached configuration instance.
+def _load_config_base() -> Config:
+    """Load configuration from TOML and environment variables.
 
     Configuration loading priority:
     1. config.toml (base configuration)
     2. Environment variables / .env (overrides)
-    3. CLI arguments (handled separately in __main__.py)
-
-    Returns:
-        Config instance with all settings loaded.
     """
     load_dotenv(_PROJECT_ROOT / ".env", override=False)
 
     toml_config = _load_toml_config()
     toml_env = _flatten_toml_to_env(toml_config)
 
-    # Update os.environ with TOML values (so nested configs can see them)
-    # Environment variables take precedence over TOML values
     for key, value in toml_env.items():
         if key not in os.environ:
             os.environ[key] = value
@@ -581,17 +574,21 @@ def get_config() -> Config:
 
     portfolio_section = toml_config.get("portfolio", {})
     if portfolio_section:
-        positions = {}
-        for code, pos_data in portfolio_section.items():
-            if isinstance(pos_data, dict) and "quantity" in pos_data and "cost_price" in pos_data:
-                try:
-                    positions[code] = PositionConfig(**pos_data)
-                except Exception as e:
-                    logger.warning(f"Invalid position config for {code}: {e}")
+        positions = {
+            code: PositionConfig(**pos_data)
+            for code, pos_data in portfolio_section.items()
+            if isinstance(pos_data, dict) and "quantity" in pos_data and "cost_price" in pos_data
+        }
         if positions:
             config.portfolio = PortfolioConfig(positions=positions)
 
     return config
+
+
+@lru_cache
+def get_config() -> Config:
+    """Get cached configuration instance."""
+    return _load_config_base()
 
 
 def get_config_safe() -> tuple[Config | None, list[str]]:
@@ -600,40 +597,12 @@ def get_config_safe() -> tuple[Config | None, list[str]]:
     Returns:
         tuple: (Config object or None, list of error messages)
     """
-    errors = []
     try:
-        load_dotenv(_PROJECT_ROOT / ".env", override=False)
-
-        toml_config = _load_toml_config()
-        toml_env = _flatten_toml_to_env(toml_config)
-
-        # Update os.environ with TOML values (so nested configs can see them)
-        # Environment variables take precedence over TOML values
-        for key, value in toml_env.items():
-            if key not in os.environ:
-                os.environ[key] = value
-
-        config = Config()
-
-        portfolio_section = toml_config.get("portfolio", {})
-        if portfolio_section:
-            positions = {}
-            for code, pos_data in portfolio_section.items():
-                if isinstance(pos_data, dict) and "quantity" in pos_data and "cost_price" in pos_data:
-                    try:
-                        positions[code] = PositionConfig(**pos_data)
-                    except Exception as e:
-                        logger.warning(f"Invalid position config for {code}: {e}")
-            if positions:
-                config.portfolio = PortfolioConfig(positions=positions)
-
-        return config, []
+        return _load_config_base(), []
     except ValidationError as e:
-        errors.append(f"配置加载失败: {e}")
-        return None, errors
+        return None, [f"配置加载失败: {e}"]
     except ConfigurationError as e:
-        errors.append(f"配置加载异常: {e}")
-        return None, errors
+        return None, [f"配置加载异常: {e}"]
 
 
 def check_config_valid(config: Config | None) -> tuple[bool, list[str]]:
