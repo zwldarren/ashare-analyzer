@@ -13,27 +13,25 @@ logger = logging.getLogger(__name__)
 class NotificationChannel(Enum):
     """通知渠道类型"""
 
-    EMAIL = "email"  # 邮件
-    TELEGRAM = "telegram"  # Telegram
-    DISCORD = "discord"  # Discord Webhook
-    CUSTOM = "custom"  # 自定义 Webhook
-    UNKNOWN = "unknown"  # 未知
+    EMAIL = "email"
+    TELEGRAM = "telegram"
+    DISCORD = "discord"
+    CUSTOM = "custom"
+    UNKNOWN = "unknown"
 
 
-class ChannelDetector:
-    """渠道检测器"""
+CHANNEL_NAMES: dict[NotificationChannel, str] = {
+    NotificationChannel.EMAIL: "邮件",
+    NotificationChannel.TELEGRAM: "Telegram",
+    NotificationChannel.DISCORD: "Discord Webhook",
+    NotificationChannel.CUSTOM: "自定义Webhook",
+    NotificationChannel.UNKNOWN: "未知渠道",
+}
 
-    @staticmethod
-    def get_channel_name(channel: NotificationChannel) -> str:
-        """获取渠道中文名称"""
-        names = {
-            NotificationChannel.EMAIL: "邮件",
-            NotificationChannel.TELEGRAM: "Telegram",
-            NotificationChannel.DISCORD: "Discord Webhook",
-            NotificationChannel.CUSTOM: "自定义Webhook",
-            NotificationChannel.UNKNOWN: "未知渠道",
-        }
-        return names.get(channel, "未知渠道")
+
+def get_channel_name(channel: NotificationChannel) -> str:
+    """Get Chinese name for notification channel."""
+    return CHANNEL_NAMES.get(channel, "未知渠道")
 
 
 class NotificationChannelBase(ABC):
@@ -42,6 +40,8 @@ class NotificationChannelBase(ABC):
 
     所有具体通知渠道必须继承此类并实现 send 方法
     """
+
+    MAX_MESSAGE_LENGTH = 4096
 
     def __init__(self, config: dict[str, Any]):
         """
@@ -82,4 +82,53 @@ class NotificationChannelBase(ABC):
     @property
     def name(self) -> str:
         """返回渠道名称"""
-        return ChannelDetector.get_channel_name(self.channel_type)
+        return get_channel_name(self.channel_type)
+
+    async def send_chunked(
+        self,
+        content: str,
+        max_length: int | None = None,
+        separator: str = "\n---\n",
+    ) -> bool:
+        """
+        Send content in chunks if it exceeds max length.
+
+        Args:
+            content: Content to send
+            max_length: Maximum length per message (default: MAX_MESSAGE_LENGTH)
+            separator: Separator to split content
+
+        Returns:
+            True if all chunks sent successfully
+        """
+        max_length = max_length or self.MAX_MESSAGE_LENGTH
+
+        if len(content) <= max_length:
+            return await self.send(content)
+
+        sections = content.split(separator)
+        chunks: list[str] = []
+        current_chunk: list[str] = []
+        current_length = 0
+
+        for section in sections:
+            section_length = len(section) + len(separator)
+
+            if current_length + section_length > max_length:
+                if current_chunk:
+                    chunks.append(separator.join(current_chunk))
+                current_chunk = [section]
+                current_length = section_length
+            else:
+                current_chunk.append(section)
+                current_length += section_length
+
+        if current_chunk:
+            chunks.append(separator.join(current_chunk))
+
+        all_success = True
+        for chunk in chunks:
+            if not await self.send(chunk):
+                all_success = False
+
+        return all_success

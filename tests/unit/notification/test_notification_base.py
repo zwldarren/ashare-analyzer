@@ -2,7 +2,11 @@
 
 import pytest
 
-from ashare_analyzer.notification.base import ChannelDetector, NotificationChannel, NotificationChannelBase
+from ashare_analyzer.notification.base import (
+    NotificationChannel,
+    NotificationChannelBase,
+    get_channel_name,
+)
 
 
 class TestNotificationChannel:
@@ -27,40 +31,33 @@ class TestNotificationChannel:
         assert NotificationChannel.EMAIL != NotificationChannel.TELEGRAM
 
 
-class TestChannelDetector:
-    """Test ChannelDetector utility class."""
+class TestGetChannelName:
+    """Test get_channel_name utility function."""
 
     def test_get_channel_name_email(self):
         """Test getting name for email channel."""
-        name = ChannelDetector.get_channel_name(NotificationChannel.EMAIL)
+        name = get_channel_name(NotificationChannel.EMAIL)
         assert name == "邮件"
 
     def test_get_channel_name_telegram(self):
         """Test getting name for telegram channel."""
-        name = ChannelDetector.get_channel_name(NotificationChannel.TELEGRAM)
+        name = get_channel_name(NotificationChannel.TELEGRAM)
         assert name == "Telegram"
 
     def test_get_channel_name_discord(self):
         """Test getting name for discord channel."""
-        name = ChannelDetector.get_channel_name(NotificationChannel.DISCORD)
+        name = get_channel_name(NotificationChannel.DISCORD)
         assert name == "Discord Webhook"
 
     def test_get_channel_name_custom(self):
         """Test getting name for custom channel."""
-        name = ChannelDetector.get_channel_name(NotificationChannel.CUSTOM)
+        name = get_channel_name(NotificationChannel.CUSTOM)
         assert name == "自定义Webhook"
 
     def test_get_channel_name_unknown(self):
         """Test getting name for unknown channel."""
-        name = ChannelDetector.get_channel_name(NotificationChannel.UNKNOWN)
+        name = get_channel_name(NotificationChannel.UNKNOWN)
         assert name == "未知渠道"
-
-    def test_get_channel_name_invalid_enum(self):
-        """Test getting name for invalid enum value returns default."""
-        # Create a mock enum member that's not in the names dict
-        # The method should return "未知渠道" for unknown channels
-        result = ChannelDetector.get_channel_name(NotificationChannel.UNKNOWN)
-        assert result == "未知渠道"
 
 
 class ConcreteNotificationChannel(NotificationChannelBase):

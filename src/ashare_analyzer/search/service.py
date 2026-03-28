@@ -5,7 +5,6 @@ Provides a unified search service interface, managing multiple search engines.
 """
 
 import logging
-import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -18,6 +17,7 @@ from ashare_analyzer.search.base import (
     SearxngProviderConfig,
 )
 from ashare_analyzer.search.filter import NewsFilter
+from ashare_analyzer.utils.stock_code import StockType, detect_stock_type
 
 if TYPE_CHECKING:
     from ashare_analyzer.storage.database import DatabaseManager
@@ -236,22 +236,13 @@ class SearchService:
     @staticmethod
     def _is_foreign_stock(stock_code: str) -> bool:
         """Check if the stock is HK or US stock."""
-        code = stock_code.strip()
-        # US stocks: 1-5 uppercase letters, may contain dot (e.g., BRK.B)
-        if re.match(r"^[A-Za-z]{1,5}(\.[A-Za-z])?$", code):
-            return True
-        # HK stocks: starts with 'hk' prefix or 5-digit number
-        lower = code.lower()
-        if lower.startswith("hk"):
-            return True
-        return bool(code.isdigit() and len(code) == 5)
+        stock_type = detect_stock_type(stock_code)
+        return stock_type in (StockType.US, StockType.HK)
 
     @staticmethod
     def _is_ashare(stock_code: str) -> bool:
         """Check if the stock is A-share (mainland China)."""
-        code = stock_code.strip()
-        # A-shares: 6-digit codes starting with 0, 3, 6
-        return bool(re.match(r"^[036]\d{5}$", code))
+        return detect_stock_type(stock_code) == StockType.A_SHARE
 
     @staticmethod
     def _should_skip_filter(provider_name: str) -> bool:

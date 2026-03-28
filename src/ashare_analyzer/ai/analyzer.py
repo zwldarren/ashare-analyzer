@@ -6,12 +6,12 @@ It coordinates specialized agents to analyze stocks and generate trading decisio
 
 Responsibilities:
 1. Coordinate multiple specialized agents for parallel analysis
-2. Aggregate agent signals to generate final trading decisions
+2. Provide analysis reports as context to DecisionMaker
 3. Generate decision dashboard reports
-4. Support multiple LLM providers with fallback
+4. Support multiple LLM providers
 
 Architecture:
-    Analysis Agents (parallel) -> RiskManagerAgent -> PortfolioManagerAgent (final decision)
+    Analysis Agents (parallel) -> RiskManagerAgent -> DecisionMakerAgent (LLM-driven decision)
 """
 
 import logging
@@ -34,12 +34,12 @@ class AIAnalyzer(IAIAnalyzer):
     AI Analyzer based on multi-agent architecture.
 
     This class coordinates multiple specialized agents to analyze stocks
-    and generates trading decisions through the PortfolioManagerAgent.
+    and generates trading decisions through the DecisionMakerAgent.
 
     Execution Flow:
         1. RiskManagerAgent calculates position limits (runs first)
         2. Analysis agents run in parallel (Technical, Fundamental, etc.)
-        3. PortfolioManagerAgent makes final decision respecting risk limits
+        3. DecisionMakerAgent makes final LLM-driven decision respecting risk limits
 
     Example:
         analyzer = AIAnalyzer()
@@ -50,16 +50,16 @@ class AIAnalyzer(IAIAnalyzer):
         """Initialize AI analyzer with multi-agent coordinator."""
         self._init_agent_coordinator()
         self._portfolio_service = get_portfolio_service()
-        logger.debug("AI分析器初始化成功 (多Agent模式)")
+        logger.debug("AI分析器初始化成功 (LLM决策模式)")
 
     def _init_agent_coordinator(self) -> None:
         """Initialize multi-agent coordinator with decision layer."""
         from ashare_analyzer.ai.agents import (
             AgentCoordinator,
             ChipAgent,
+            DecisionMakerAgent,
             FundamentalAgent,
             NewsSentimentAgent,
-            PortfolioManagerAgent,
             RiskManagerAgent,
             StyleAgent,
             TechnicalAgent,
@@ -68,7 +68,7 @@ class AIAnalyzer(IAIAnalyzer):
 
         self._agent_coordinator = AgentCoordinator()
 
-        # Register analysis agents (provide signals)
+        # Register analysis agents (provide analysis reports, not votes)
         # Technical & A-share specific
         self._agent_coordinator.register_agent(TechnicalAgent())
         self._agent_coordinator.register_agent(ChipAgent())
@@ -86,11 +86,11 @@ class AIAnalyzer(IAIAnalyzer):
         # Risk manager (calculates position limits, not a trading signal)
         self._risk_manager_agent = RiskManagerAgent()
 
-        # Portfolio manager (final decision maker with risk constraints)
-        self._portfolio_manager = PortfolioManagerAgent()
+        # Decision maker (LLM-driven final decision)
+        self._decision_maker = DecisionMakerAgent()
 
         agent_count = len(self._agent_coordinator.agents)
-        logger.debug(f"Agent协调器初始化完成，已注册{agent_count}个分析Agent + RiskManager + PortfolioManager")
+        logger.debug(f"Agent协调器初始化完成，已注册{agent_count}个分析Agent + RiskManager + DecisionMaker")
 
     def is_available(self) -> bool:
         """Check if analyzer is available."""
@@ -103,7 +103,7 @@ class AIAnalyzer(IAIAnalyzer):
         Analysis flow:
         1. RiskManagerAgent calculates position limits (runs first)
         2. Execute parallel multi-agent analysis (Technical/Fundamental/Chip)
-        3. PortfolioManagerAgent makes final decision respecting risk limits
+        3. DecisionMakerAgent makes final LLM-driven decision respecting risk limits
         4. Build decision dashboard
         5. Return structured result
 
@@ -172,37 +172,29 @@ class AIAnalyzer(IAIAnalyzer):
                 current_price=current_price,
             )
 
-            # Step 5: PortfolioManager makes final decision with risk constraints
-            # Calculate weighted score from agent signals
-            weighted_score = self._calculate_weighted_score(agent_signals)
+            # Step 5: DecisionMaker makes final LLM-driven decision
+            # Convert agent signals to analysis reports format
+            analysis_reports = self._format_analysis_reports(agent_signals)
 
             decision_context = {
                 "code": code,
                 "stock_name": name,
+                "analysis_reports": analysis_reports,
                 "portfolio": portfolio_context,
-                "agent_signals": agent_signals,
-                "risk_manager_signal": {
-                    "signal": risk_manager_signal.signal.to_string(),
-                    "confidence": risk_manager_signal.confidence,
-                    "reasoning": risk_manager_signal.reasoning,
-                    "metadata": risk_manager_signal.metadata,
-                },
-                "consensus_data": {
-                    "consensus_level": consensus_level,
-                    "participating_agents": consensus.participating_agents,
-                    "risk_flags": consensus.risk_flags,
-                    "weighted_score": weighted_score,
-                },
                 "market_data": context.get("today", {}),
+                "risk_limits": {
+                    "max_position": risk_manager_signal.metadata.get("max_position_size", 0.25),
+                    "volatility_tier": risk_manager_signal.metadata.get("volatility_tier", "medium"),
+                },
             }
 
-            display.start_agent("PortfolioManagerAgent")
-            final_signal = await self._portfolio_manager.analyze(decision_context)
-            action = final_signal.metadata.get("action", "HOLD")
-            display.complete_agent("PortfolioManagerAgent", normalize_signal(action), final_signal.confidence)
+            display.start_agent("DecisionMakerAgent")
+            final_signal = await self._decision_maker.analyze(decision_context)
+            action = final_signal.metadata.get("decision", "hold").upper()
+            display.complete_agent("DecisionMakerAgent", normalize_signal(action), final_signal.confidence)
 
             logger.debug(
-                f"[{code}] 投资组合决策完成: {final_signal.metadata.get('action', 'unknown')} "
+                f"[{code}] LLM决策完成: {final_signal.metadata.get('decision', 'unknown')} "
                 f"(置信度{final_signal.confidence}%, 仓位{final_signal.metadata.get('position_ratio', 0) * 100:.0f}%)"
             )
 
@@ -223,11 +215,12 @@ class AIAnalyzer(IAIAnalyzer):
             result.data_sources = self._collect_data_sources(agent_signals)
             result.raw_response = {
                 "final_decision": {
-                    "action": final_signal.metadata.get("action", final_signal.signal.to_string()),
-                    "signal": final_signal.signal,
+                    "decision": final_signal.metadata.get("decision", "hold"),
+                    "signal": final_signal.signal.to_string(),
                     "confidence": final_signal.confidence,
                     "reasoning": final_signal.reasoning,
-                    "metadata": final_signal.metadata,
+                    "key_considerations": final_signal.metadata.get("key_considerations", []),
+                    "risks_identified": final_signal.metadata.get("risks_identified", []),
                 },
                 "risk_management": {
                     "max_position_size": risk_manager_signal.metadata.get("max_position_size"),
@@ -235,6 +228,7 @@ class AIAnalyzer(IAIAnalyzer):
                     "volatility_tier": risk_manager_signal.metadata.get("volatility_tier"),
                 },
                 "agent_signals": agent_signals,
+                "analysis_reports": analysis_reports,
                 "consensus": {
                     "consensus_level": consensus_level,
                     "participating_agents": consensus.participating_agents,
@@ -270,12 +264,12 @@ class AIAnalyzer(IAIAnalyzer):
         consensus_level: float,
         context: dict[str, Any],
     ) -> AnalysisResult:
-        """Build AnalysisResult from decision agent output.
+        """Build AnalysisResult from DecisionMaker output.
 
         Args:
             code: Stock code
             name: Stock name
-            final_signal: Final signal from decision agent
+            final_signal: Final signal from DecisionMakerAgent
             agent_signals: Signals from all analysis agents
             consensus_level: Consensus level among agents
             context: Analysis context
@@ -284,55 +278,44 @@ class AIAnalyzer(IAIAnalyzer):
             AnalysisResult object
         """
 
-        # Extract decision metadata
+        # Extract decision metadata (new format from DecisionMakerAgent)
         metadata = final_signal.metadata
-        action = metadata.get("action", "HOLD")
+        decision = metadata.get("decision", "hold").upper()
         position_ratio = metadata.get("position_ratio", 0.0)
         trade_quantity = metadata.get("trade_quantity", 0)
         position_action = metadata.get("position_action", "no_action")
-        key_factors = metadata.get("key_factors", [])
-        risk_assessment = metadata.get("risk_assessment", {})
+        key_considerations = metadata.get("key_considerations", [])
+        risks_identified = metadata.get("risks_identified", [])
 
-        # Map action to Chinese operation advice
+        # Map decision to Chinese operation advice
         action_map = {
             "BUY": "买入",
             "HOLD": "持有",
             "SELL": "卖出",
         }
-        operation_advice = action_map.get(action, "观望")
+        operation_advice = action_map.get(decision, "观望")
 
-        # Map internal signal to decision_type
-        signal_to_decision = {
-            "buy": "buy",
-            "hold": "hold",
-            "sell": "sell",
-        }
-        decision_type = signal_to_decision.get(final_signal.signal, "hold")
+        # Map decision to decision_type
+        decision_type = decision.lower()
 
-        # Determine trend prediction based on action
-        if action == "BUY":
+        # Determine trend prediction based on decision
+        if decision == "BUY":
             trend_prediction = "看多" if final_signal.confidence >= 70 else "谨慎看多"
-        elif action == "SELL":
+        elif decision == "SELL":
             trend_prediction = "看空" if final_signal.confidence >= 70 else "谨慎看空"
         else:
             trend_prediction = "震荡"
 
-        # Build new decision-focused dashboard
+        # Build decision-focused dashboard
         dashboard = self._build_decision_dashboard(final_signal, agent_signals, consensus_level, context)
 
-        # Build analysis summary with key factors
-        analysis_summary = self._build_decision_summary(final_signal, agent_signals, consensus_level, key_factors)
+        # Build analysis summary with key considerations
+        analysis_summary = self._build_decision_summary(
+            final_signal, agent_signals, consensus_level, key_considerations
+        )
 
-        # Extract risk warnings
-        risk_level = risk_assessment.get("level", "low")
-        risk_concerns = risk_assessment.get("concerns", [])
-        if risk_concerns:
-            risk_warning = f"风险等级: {risk_level} | " + "; ".join(risk_concerns[:3])
-        else:
-            risk_warning = f"风险等级: {risk_level}"
-
-        # Build decision reason
-        decision_reason = final_signal.reasoning
+        # Build risk warning from identified risks
+        risk_warning = "风险提示: " + "; ".join(risks_identified[:3]) if risks_identified else "未识别到重大风险"
 
         # Extract portfolio information from context
         portfolio_info = context.get("portfolio", {})
@@ -348,11 +331,11 @@ class AIAnalyzer(IAIAnalyzer):
             operation_advice=operation_advice,
             decision_type=decision_type,
             confidence_level=self._score_to_confidence(final_signal.confidence),
-            final_action=action,
+            final_action=decision,
             position_ratio=position_ratio,
             action_quantity=trade_quantity,
             position_action=position_action,
-            decision_reasoning=decision_reason,
+            decision_reasoning=final_signal.reasoning,
             has_position=has_position,
             position_quantity=position_quantity,
             position_cost_price=position_cost_price,
@@ -363,69 +346,58 @@ class AIAnalyzer(IAIAnalyzer):
             success=True,
         )
 
-    def _calculate_weighted_score(self, agent_signals: dict[str, Any]) -> float:
-        """
-        Calculate weighted score from agent signals.
+    def _format_analysis_reports(self, agent_signals: dict[str, Any]) -> list[dict[str, Any]]:
+        """Format agent signals as analysis reports for DecisionMaker.
 
-        Score range: -100 (strong sell) to +100 (strong buy)
-
-        Each agent contributes:
-        - buy: +confidence
-        - sell: -confidence
-        - hold: 0
-
-        Weights are based on agent reliability and signal strength.
+        This converts the agent signals from the voting format to
+        a format suitable for LLM context input.
 
         Args:
             agent_signals: Dict of agent name -> signal data
 
         Returns:
-            Weighted score from -100 to +100
+            List of analysis report dicts with analyst, conclusion, confidence, reasoning
         """
-        if not agent_signals:
-            return 0.0
-
-        # Agent weights based on reliability and importance
-        # Higher weight = more influence on final decision
-        agent_weights = {
-            "TechnicalAgent": 1.0,  # Technical analysis is important
-            "ChipAgent": 1.2,  # Chip distribution is very important for A-shares
-            "FundamentalAgent": 0.8,  # Fundamental takes longer to materialize
-            "ValuationAgent": 1.0,  # Valuation is key for long-term
-            "NewsSentimentAgent": 0.6,  # News can be noisy
-            "StyleAgent": 0.5,  # Style is supplementary
-        }
-
-        total_weighted_score = 0.0
-        total_weight = 0.0
-
+        reports = []
         for agent_name, signal_data in agent_signals.items():
-            signal = signal_data.get("signal", "hold").lower()
-            confidence = signal_data.get("confidence", 0)
+            # Extract key metrics from metadata if available
+            metadata = signal_data.get("metadata", {})
+            key_metrics = {}
 
-            # Skip failed agents (confidence == 0 usually means failure)
-            if confidence <= 0:
-                continue
+            # Extract relevant metrics based on agent type
+            if "TechnicalAgent" in agent_name:
+                key_metrics = {
+                    "trend": metadata.get("trend_assessment"),
+                    "trend_strength": metadata.get("trend_strength"),
+                    "rsi": metadata.get("rsi"),
+                    "macd": metadata.get("macd_signal"),
+                }
+            elif "ChipAgent" in agent_name:
+                key_metrics = {
+                    "concentration": metadata.get("concentration"),
+                    "profit_ratio": metadata.get("profit_ratio"),
+                    "phase": metadata.get("phase"),
+                }
+            elif "ValuationAgent" in agent_name:
+                key_metrics = {
+                    "margin_of_safety": metadata.get("margin_of_safety"),
+                    "fair_value": metadata.get("fair_value"),
+                    "pe_ratio": metadata.get("pe_ratio"),
+                }
 
-            # Get weight for this agent (default 1.0)
-            weight = agent_weights.get(agent_name, 1.0)
+            # Clean up None values
+            key_metrics = {k: v for k, v in key_metrics.items() if v is not None}
 
-            # Calculate contribution: buy = +confidence, sell = -confidence, hold = 0
-            if signal == "buy":
-                contribution = confidence * weight
-            elif signal == "sell":
-                contribution = -confidence * weight
-            else:  # hold
-                contribution = 0
-
-            total_weighted_score += contribution
-            total_weight += weight
-
-        # Normalize to -100 to +100 range
-        normalized_score = (total_weighted_score / (100 * total_weight)) * 100 if total_weight > 0 else 0.0
-
-        # Clamp to range
-        return max(-100.0, min(100.0, normalized_score))
+            reports.append(
+                {
+                    "analyst": agent_name,
+                    "conclusion": signal_data.get("signal", "hold"),
+                    "confidence": signal_data.get("confidence", 0),
+                    "reasoning": signal_data.get("reasoning", ""),
+                    "key_metrics": key_metrics,
+                }
+            )
+        return reports
 
     def _build_decision_dashboard(
         self,
@@ -436,26 +408,25 @@ class AIAnalyzer(IAIAnalyzer):
     ) -> dict[str, Any]:
         """Build decision-focused dashboard for visualization."""
         metadata = final_signal.metadata
-        action = metadata.get("action", "HOLD")
+        decision = metadata.get("decision", "hold").upper()
         position_ratio = metadata.get("position_ratio", 0.0)
-        key_factors = metadata.get("key_factors", [])
-        risk_assessment = metadata.get("risk_assessment", {})
+        key_considerations = metadata.get("key_considerations", [])
+        risks_identified = metadata.get("risks_identified", [])
 
         return {
             "final_decision": {
-                "action": action,
+                "decision": decision,
                 "confidence": final_signal.confidence,
                 "position_ratio": f"{position_ratio * 100:.0f}%",
                 "reasoning": final_signal.reasoning,
             },
-            "key_factors": key_factors,
-            "risk_assessment": risk_assessment,
-            "agent_consensus": {
+            "key_considerations": key_considerations,
+            "risks_identified": risks_identified,
+            "agent_reports": {
                 "signals": {k: v["signal"] for k, v in agent_signals.items()},
                 "confidences": {k: v["confidence"] for k, v in agent_signals.items()},
                 "reasonings": {k: v["reasoning"] for k, v in agent_signals.items()},
                 "consensus_level": f"{consensus_level:.0%}",
-                "participating_agents": list(agent_signals.items()),
             },
             "market_context": {
                 "current_position": metadata.get("current_position", "none"),
@@ -468,25 +439,26 @@ class AIAnalyzer(IAIAnalyzer):
         final_signal: Any,
         agent_signals: dict[str, Any],
         consensus_level: float,
-        key_factors: list[str],
+        key_considerations: list[str],
     ) -> str:
         """Build decision-focused summary text."""
         metadata = final_signal.metadata
-        action = metadata.get("action", "HOLD")
+        decision = metadata.get("decision", "hold").upper()
 
         parts = [
-            f"最终决策: {action}",
+            f"LLM决策: {decision}",
             f"置信度: {final_signal.confidence}%",
             f"共识度: {consensus_level:.0%}",
         ]
 
-        # Add key factors
-        if key_factors:
-            parts.append(f"关键因子: {', '.join(key_factors[:3])}")
+        # Add key considerations
+        if key_considerations:
+            parts.append(f"关键考量: {', '.join(key_considerations[:3])}")
 
-        # Add agent breakdown
-        for name, signal in agent_signals.items():
-            parts.append(f"{name}: {signal['signal']}({signal['confidence']})")
+        # Add agent summary
+        buy_count = sum(1 for s in agent_signals.values() if s.get("signal", "").lower() == "buy")
+        sell_count = sum(1 for s in agent_signals.values() if s.get("signal", "").lower() == "sell")
+        parts.append(f"分析师: {buy_count}买/{sell_count}卖")
 
         return " | ".join(parts)
 

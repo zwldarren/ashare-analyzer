@@ -9,10 +9,10 @@ This agent provides a unified investment style analysis with:
 - Momentum investing (trend following): 35%
 """
 
-import logging
 import math
 from typing import Any
 
+from ashare_analyzer.ai.tools import ANALYZE_SIGNAL_TOOL
 from ashare_analyzer.constants import (
     A_SHARE_GRAHAM_MULTIPLIER,
     A_SHARE_MOS_MODERATE,
@@ -27,9 +27,67 @@ from ashare_analyzer.exceptions import handle_errors
 from ashare_analyzer.models import AgentSignal, SignalType
 
 from .base import BaseAgent
-from .utils import FinancialScorer
+from .utils import FinancialScorer, score_to_signal
 
-logger = logging.getLogger(__name__)
+# System prompt for style analysis
+STYLE_SYSTEM_PROMPT = """You are a professional investment style analyst.
+
+Your task: Analyze a stock's investment style characteristics and generate trading signals.
+
+=== Style Dimensions ===
+You will receive data in three dimensions:
+
+1. Value Attributes:
+   - PE ratio, PB ratio (lower is better for value)
+   - Margin of safety from valuation
+   - Dividend yield (higher is better)
+   - Financial stability metrics
+
+2. Growth Attributes:
+   - Revenue growth rate
+   - EPS growth rate
+   - Market opportunity size
+   - Innovation indicators
+
+3. Momentum Attributes:
+   - Price trend (MA alignment)
+   - Volume confirmation
+   - Relative strength vs market
+   - Technical signals
+
+=== Analysis Approach ===
+- Stocks can exhibit multiple styles simultaneously
+- Weight styles based on current data, not fixed ratios
+- Consider which style dominates for this stock
+- Assess quality of each style signal
+- Market conditions may favor certain styles
+
+=== Signal Guidelines ===
+BUY conditions:
+- Strong value with margin of safety >20%
+- Strong growth with sustainable metrics
+- Strong momentum with volume confirmation
+- One style strongly dominant with clear signal
+
+SELL conditions:
+- Overvalued with negative margin
+- Growth deteriorating
+- Momentum breaking down
+- Conflicting style signals
+
+HOLD conditions:
+- Mixed style signals
+- Moderate metrics across dimensions
+- Unclear dominant style
+
+=== Confidence Levels ===
+- 90-100%: One style strongly dominates with clear metrics
+- 70-89%: Clear style inclination with supporting data
+- 50-69%: Moderate style signals, some uncertainty
+- 30-49%: Conflicting style signals
+- 10-29%: No clear style pattern
+
+Use the analyze_signal function to return your analysis."""
 
 
 class StyleAgent(BaseAgent):
@@ -96,36 +154,110 @@ class StyleAgent(BaseAgent):
     def __init__(self):
         """Initialize the Style Agent."""
         super().__init__("StyleAgent")
-        self._logger = logging.getLogger(__name__)
+        self._ensure_llm_client()
 
-    def is_available(self) -> bool:
-        """Always available - only requires context data."""
-        return True
+    def _build_style_prompt(self, stock_code: str, context: dict[str, Any]) -> str:
+        """Build the style analysis prompt for LLM."""
+        financial_data = context.get("financial_data", {})
+        valuation_data = context.get("valuation_data", {})
+        technical_data = context.get("technical_data", {})
+        today = context.get("today", {})
 
-    @handle_errors("投资风格分析失败", default_return=None)
-    async def analyze(self, context: dict[str, Any]) -> AgentSignal:
-        """
-        Execute unified investment style analysis (async).
+        sections = [f"=== {stock_code} Style Analysis ===", ""]
 
-        Args:
-            context: Analysis context containing:
-                - code: Stock code
-                - stock_name: Stock name
-                - current_price: Current price
-                - financial_data: Financial metrics
-                - valuation_data: Valuation inputs
-                - growth_data: Growth metrics
-                - price_data: Price history
-                - technical_data: Technical indicators
-                - market_data: Market comparison data
+        # Value metrics
+        sections.append("=== Value Attributes ===")
+        if valuation_data.get("pe_ratio"):
+            sections.append(f"- PE Ratio: {valuation_data['pe_ratio']:.2f}")
+        if valuation_data.get("pb_ratio"):
+            sections.append(f"- PB Ratio: {valuation_data['pb_ratio']:.2f}")
+        if valuation_data.get("margin_of_safety") is not None:
+            sections.append(f"- Margin of Safety: {valuation_data['margin_of_safety']:.1f}%")
+        if valuation_data.get("dividend_yield"):
+            sections.append(f"- Dividend Yield: {valuation_data['dividend_yield']:.2f}%")
+        if financial_data.get("debt_to_equity") is not None:
+            sections.append(f"- Debt-to-Equity: {financial_data['debt_to_equity']:.2f}")
+        if not any(
+            [
+                valuation_data.get("pe_ratio"),
+                valuation_data.get("pb_ratio"),
+                valuation_data.get("dividend_yield"),
+            ]
+        ):
+            sections.append("Limited value data available")
 
-        Returns:
-            AgentSignal with comprehensive style analysis
-        """
-        stock_code = context.get("code", "")
-        self._logger.debug(f"[{stock_code}] StyleAgent开始投资风格分析")
+        # Growth metrics
+        sections.extend(["", "=== Growth Attributes ==="])
+        if financial_data.get("revenue_growth") is not None:
+            sections.append(f"- Revenue Growth: {financial_data['revenue_growth']:.2f}%")
+        if financial_data.get("earnings_growth") is not None:
+            sections.append(f"- EPS Growth: {financial_data['earnings_growth']:.2f}%")
+        if financial_data.get("roe"):
+            sections.append(f"- ROE: {financial_data['roe']:.2f}%")
+        if not any([financial_data.get("revenue_growth"), financial_data.get("earnings_growth")]):
+            sections.append("Limited growth data available")
 
-        # Get data from context
+        # Momentum metrics
+        sections.extend(["", "=== Momentum Attributes ==="])
+        if today.get("close") and today.get("ma5"):
+            sections.append(f"- Price vs MA5: {((today['close'] - today['ma5']) / today['ma5'] * 100):.2f}%")
+        if today.get("pct_chg") is not None:
+            sections.append(f"- Price Change: {today['pct_chg']:.2f}%")
+        if technical_data.get("rsi_14"):
+            sections.append(f"- RSI(14): {technical_data['rsi_14']:.1f}")
+        if technical_data.get("macd_hist"):
+            sections.append(f"- MACD Histogram: {technical_data['macd_hist']:.4f}")
+        if today.get("volume_ratio"):
+            sections.append(f"- Volume Ratio: {today['volume_ratio']:.2f}")
+        if not any([today.get("close"), today.get("pct_chg"), technical_data.get("rsi_14")]):
+            sections.append("Limited momentum data available")
+
+        sections.extend(
+            [
+                "",
+                "请根据以上风格维度分析，判断该股票的投资风格特征，使用 analyze_signal 函数返回交易信号。",
+            ]
+        )
+
+        return "\n".join(sections)
+
+    async def _analyze_with_llm(self, stock_code: str, context: dict[str, Any]) -> dict[str, Any] | None:
+        """Use LLM for style analysis with Function Call."""
+        if not self._llm_client:
+            return None
+
+        try:
+            prompt = self._build_style_prompt(stock_code, context)
+
+            self._logger.debug(f"[{stock_code}] StyleAgent calling LLM...")
+            result = await self._llm_client.generate_with_tool(
+                prompt=prompt,
+                tool=ANALYZE_SIGNAL_TOOL,
+                generation_config={"temperature": 0.2, "max_output_tokens": 1024},
+                system_prompt=STYLE_SYSTEM_PROMPT,
+                agent_name="StyleAgent",
+            )
+
+            if result and "signal" in result:
+                self._logger.debug(f"[{stock_code}] LLM style analysis successful: {result}")
+                return result
+            else:
+                self._logger.warning(f"[{stock_code}] LLM style analysis returned invalid format")
+                return None
+
+        except Exception as e:
+            self._logger.error(f"[{stock_code}] LLM style analysis failed: {e}")
+            return None
+
+    def _build_signal_from_llm(self, llm_analysis: dict[str, Any], context: dict[str, Any]) -> AgentSignal:
+        """Build AgentSignal from LLM analysis result."""
+        signal_str = llm_analysis.get("signal", "hold")
+        signal = SignalType.from_string(signal_str)
+        confidence = llm_analysis.get("confidence", 50)
+        reasoning = llm_analysis.get("reasoning", "无详细分析")
+        key_metrics = llm_analysis.get("key_metrics", {})
+
+        # Calculate style scores for metadata consistency
         current_price = context.get("current_price", 0)
         financial_data = context.get("financial_data", {})
         valuation_data = context.get("valuation_data", {})
@@ -134,37 +266,99 @@ class StyleAgent(BaseAgent):
         technical_data = context.get("technical_data", {})
         market_data = context.get("market_data", {})
 
-        # Calculate scores for each style
-        value_score = self._analyze_value_style(current_price, financial_data, valuation_data)
-        growth_score = self._analyze_growth_style(current_price, financial_data, growth_data)
-        momentum_score = self._analyze_momentum_style(price_data, technical_data, market_data)
-
-        # Calculate weighted total score
+        value_score = self._heuristic_value_score(current_price, financial_data, valuation_data)
+        growth_score = self._heuristic_growth_score(current_price, financial_data, growth_data)
+        momentum_score = self._heuristic_momentum_score(price_data, technical_data, market_data)
         total_score = (
             value_score * self.STYLE_WEIGHTS["value"]
             + growth_score * self.STYLE_WEIGHTS["growth"]
             + momentum_score * self.STYLE_WEIGHTS["momentum"]
         )
 
-        # Generate signal based on score
-        signal, confidence = self._score_to_signal(total_score)
+        metadata = {
+            "analysis_method": "llm",
+            "value_score": value_score,
+            "growth_score": growth_score,
+            "momentum_score": momentum_score,
+            "total_score": total_score,
+        }
+        metadata.update(key_metrics)
 
-        # Build comprehensive reasoning
-        reasoning = self._build_reasoning(
-            value_score,
-            growth_score,
-            momentum_score,
-            financial_data,
-            valuation_data,
-            growth_data,
-            price_data,
-            technical_data,
+        return AgentSignal(
+            agent_name=self.name,
+            signal=signal,
+            confidence=confidence,
+            reasoning=reasoning,
+            metadata=metadata,
         )
 
+    def is_available(self) -> bool:
+        """Always available - only requires context data."""
+        return True
+
+    @handle_errors("风格分析失败", default_return=None)
+    async def analyze(self, context: dict[str, Any]) -> AgentSignal:
+        """
+        Execute style analysis using LLM (async).
+
+        Args:
+            context: Analysis context containing financial_data, valuation_data, technical_data
+
+        Returns:
+            AgentSignal with style-based trading signal
+        """
+        stock_code = context.get("code", "")
+
+        self._logger.debug(f"[{stock_code}] StyleAgent starting analysis")
+
+        # Try LLM analysis first
+        if self._llm_client and self._llm_client.is_available():
+            llm_result = await self._analyze_with_llm(stock_code, context)
+            if llm_result:
+                return self._build_signal_from_llm(llm_result, context)
+
+        # Fallback to heuristic analysis
+        self._logger.warning(f"[{stock_code}] LLM unavailable, using heuristic fallback")
+        return await self._heuristic_analysis(context)
+
+    async def _heuristic_analysis(self, context: dict[str, Any]) -> AgentSignal:
+        """Fallback heuristic analysis when LLM is unavailable."""
+        stock_code = context.get("code", "")
+        current_price = context.get("current_price", 0)
+        financial_data = context.get("financial_data", {})
+        valuation_data = context.get("valuation_data", {})
+        growth_data = context.get("growth_data", {})
+        price_data = context.get("price_data", {})
+        technical_data = context.get("technical_data", {})
+        market_data = context.get("market_data", {})
+
+        # Calculate style scores using heuristic methods
+        value_score = self._heuristic_value_score(current_price, financial_data, valuation_data)
+        growth_score = self._heuristic_growth_score(current_price, financial_data, growth_data)
+        momentum_score = self._heuristic_momentum_score(price_data, technical_data, market_data)
+
+        # Combine scores with fixed weights
+        total_score = (
+            value_score * self.STYLE_WEIGHTS["value"]
+            + growth_score * self.STYLE_WEIGHTS["growth"]
+            + momentum_score * self.STYLE_WEIGHTS["momentum"]
+        )
+
+        # Generate signal
+        signal, confidence = score_to_signal(total_score)
+
+        # Build reasoning
+        reasoning_parts = [
+            f"价值属性{'强' if value_score >= 70 else '中' if value_score >= 40 else '弱'}({value_score:.0f})",
+            f"成长属性{'强' if growth_score >= 70 else '中' if growth_score >= 40 else '弱'}({growth_score:.0f})",
+            f"动量属性{'强' if momentum_score >= 70 else '中' if momentum_score >= 40 else '弱'}({momentum_score:.0f})",
+        ]
+        reasoning = " / ".join(reasoning_parts)
+
         self._logger.debug(
-            f"[{stock_code}] StyleAgent分析完成: {signal} "
+            f"[{stock_code}] StyleAgent heuristic analysis: {signal} "
             f"(价值{value_score:.0f}/成长{growth_score:.0f}/动量{momentum_score:.0f}, "
-            f"总分{total_score:.1f}/100, 置信度{confidence}%)"
+            f"置信度{confidence}%)"
         )
 
         return AgentSignal(
@@ -173,17 +367,15 @@ class StyleAgent(BaseAgent):
             confidence=confidence,
             reasoning=reasoning,
             metadata={
-                "total_score": round(total_score, 1),
-                "value_score": round(value_score, 1),
-                "growth_score": round(growth_score, 1),
-                "momentum_score": round(momentum_score, 1),
-                "value_breakdown": self._get_value_breakdown(valuation_data, financial_data),
-                "growth_breakdown": self._get_growth_breakdown(growth_data),
-                "momentum_breakdown": self._get_momentum_breakdown(price_data, technical_data),
+                "analysis_method": "heuristic_fallback",
+                "value_score": value_score,
+                "growth_score": growth_score,
+                "momentum_score": momentum_score,
+                "total_score": total_score,
             },
         )
 
-    def _analyze_value_style(self, current_price: float, financial_data: dict, valuation_data: dict) -> float:
+    def _heuristic_value_score(self, current_price: float, financial_data: dict, valuation_data: dict) -> float:
         """Analyze value investing characteristics (0-100 scale)."""
         if not financial_data:
             return 50.0  # Neutral if no data
@@ -206,7 +398,7 @@ class StyleAgent(BaseAgent):
 
         return min(score, 100)
 
-    def _analyze_growth_style(self, current_price: float, financial_data: dict, growth_data: dict) -> float:
+    def _heuristic_growth_score(self, current_price: float, financial_data: dict, growth_data: dict) -> float:
         """Analyze growth investing characteristics (0-100 scale)."""
         if not growth_data:
             return 50.0  # Neutral if no data
@@ -236,7 +428,7 @@ class StyleAgent(BaseAgent):
 
         return min(score, 100)
 
-    def _analyze_momentum_style(self, price_data: dict, technical_data: dict, market_data: dict) -> float:
+    def _heuristic_momentum_score(self, price_data: dict, technical_data: dict, market_data: dict) -> float:
         """Analyze momentum investing characteristics (0-100 scale)."""
         if not price_data:
             return 50.0  # Neutral if no data
@@ -645,81 +837,6 @@ class StyleAgent(BaseAgent):
 
             return (current - past) / past * 100
         except Exception:
-            logger.debug(f"Error calculating change in {days} days")
+            self._logger.debug(f"Error calculating change in {days} days")
             return 0
 
-    def _score_to_signal(self, score: float) -> tuple[SignalType, int]:
-        """Convert total score to signal and confidence."""
-        if score >= 65:
-            confidence = min(100, int(60 + (score - 65) * 1.1))
-            return (SignalType.BUY, confidence)
-        elif score <= 30:
-            confidence = min(100, int(60 + (30 - score) * 1.1))
-            return (SignalType.SELL, confidence)
-        else:
-            distance = abs(score - 50)
-            confidence = max(30, int(40 + distance))
-            return (SignalType.HOLD, confidence)
-
-    def _build_reasoning(
-        self,
-        value_score: float,
-        growth_score: float,
-        momentum_score: float,
-        financial_data: dict,
-        valuation_data: dict,
-        growth_data: dict,
-        price_data: dict,
-        technical_data: dict,
-    ) -> str:
-        """Build comprehensive reasoning string."""
-        parts = []
-
-        # Value component
-        if value_score >= 70:
-            parts.append(f"价值属性强({value_score:.0f})")
-        elif value_score <= 40:
-            parts.append(f"价值属性弱({value_score:.0f})")
-
-        # Growth component
-        if growth_score >= 70:
-            parts.append(f"成长属性强({growth_score:.0f})")
-        elif growth_score <= 40:
-            parts.append(f"成长属性弱({growth_score:.0f})")
-
-        # Momentum component
-        if momentum_score >= 70:
-            parts.append(f"动量属性强({momentum_score:.0f})")
-        elif momentum_score <= 40:
-            parts.append(f"动量属性弱({momentum_score:.0f})")
-
-        if not parts:
-            parts.append(f"风格均衡(价值{value_score:.0f}/成长{growth_score:.0f}/动量{momentum_score:.0f})")
-
-        return " / ".join(parts)
-
-    def _get_value_breakdown(self, valuation_data: dict, financial_data: dict) -> dict:
-        """Get value analysis breakdown."""
-        return {
-            "pe_ratio": valuation_data.get("pe_ratio"),
-            "pb_ratio": valuation_data.get("pb_ratio"),
-            "roe": financial_data.get("roe"),
-            "net_margin": financial_data.get("net_margin"),
-        }
-
-    def _get_growth_breakdown(self, growth_data: dict) -> dict:
-        """Get growth analysis breakdown."""
-        return {
-            "revenue_cagr": growth_data.get("revenue_cagr"),
-            "price_momentum_1m": growth_data.get("price_momentum_1m"),
-            "forward_pe": growth_data.get("forward_pe"),
-        }
-
-    def _get_momentum_breakdown(self, price_data: dict, technical_data: dict) -> dict:
-        """Get momentum analysis breakdown."""
-        return {
-            "returns_1m": self._get_return(price_data, 20),
-            "returns_3m": self._get_return(price_data, 60),
-            "adx": technical_data.get("adx"),
-            "volume_momentum": technical_data.get("volume_momentum"),
-        }

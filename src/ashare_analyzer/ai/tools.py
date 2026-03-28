@@ -116,4 +116,70 @@ ANALYZE_SIGNAL_TOOL: dict[str, Any] = {
 }
 
 
-__all__ = ["ANALYZE_SIGNAL_TOOL"]
+# Decision tool for LLM-driven autonomous decisions
+DECISION_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "make_trading_decision",
+        "description": "Make an autonomous trading decision based on analysis reports and market context",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "decision": {
+                    "type": "string",
+                    "enum": ["buy", "sell", "hold"],
+                    "description": "Your final trading decision",
+                },
+                "confidence": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "description": "Your confidence level in this decision (0-100)",
+                },
+                "position_ratio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Target position ratio as fraction of portfolio (0-1), must not exceed risk limit",
+                },
+                "trade_quantity": {
+                    "type": "integer",
+                    "description": "Number of shares to trade. Positive for buy, positive for sell (absolute value)",
+                },
+                "position_action": {
+                    "type": "string",
+                    "enum": [
+                        "open_position",
+                        "add_position",
+                        "reduce_position",
+                        "close_position",
+                        "keep_position",
+                        "no_action",
+                    ],
+                    "description": "Position action type",
+                },
+                "reasoning": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": (
+                        "Your reasoning for this decision - explain YOUR thought process, not just summarize analysts"
+                    ),
+                },
+                "key_considerations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Key factors that most influenced your decision",
+                },
+                "risks_identified": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Risks or concerns you identified that affected your decision",
+                },
+            },
+            "required": ["decision", "confidence", "position_ratio", "reasoning"],
+        },
+    },
+}
+
+
+__all__ = ["ANALYZE_SIGNAL_TOOL", "DECISION_TOOL"]

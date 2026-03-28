@@ -18,7 +18,7 @@ class TestAIAnalyzer:
 
             assert analyzer._agent_coordinator is not None
             assert analyzer._risk_manager_agent is not None
-            assert analyzer._portfolio_manager is not None
+            assert analyzer._decision_maker is not None
 
     def test_is_available_returns_true(self):
         """Test is_available returns True when coordinator is initialized."""
@@ -64,24 +64,25 @@ class TestAIAnalyzer:
             metadata={"max_position_size": 0.25, "risk_score": 50},
         )
 
-        mock_portfolio_signal = AgentSignal(
-            agent_name="PortfolioManagerAgent",
+        # DecisionMakerAgent returns decision in new format
+        mock_decision_signal = AgentSignal(
+            agent_name="DecisionMakerAgent",
             signal=SignalType.BUY,
             confidence=75,
-            reasoning="Strong buy signal",
+            reasoning="Strong buy signal based on technical analysis",
             metadata={
-                "action": "BUY",
+                "decision": "buy",
                 "position_ratio": 0.2,
-                "key_factors": ["趋势向上"],
-                "risk_assessment": {"level": "low", "concerns": []},
+                "key_considerations": ["趋势向上", "成交量放大"],
+                "risks_identified": ["市场波动"],
             },
         )
 
         mock_risk_manager = MagicMock()
         mock_risk_manager.analyze = AsyncMock(return_value=mock_risk_signal)
 
-        mock_portfolio_manager = MagicMock()
-        mock_portfolio_manager.analyze = AsyncMock(return_value=mock_portfolio_signal)
+        mock_decision_maker = MagicMock()
+        mock_decision_maker.analyze = AsyncMock(return_value=mock_decision_signal)
 
         mock_portfolio_service = MagicMock()
         mock_portfolio_service.get_positions = AsyncMock(return_value=[])
@@ -90,7 +91,7 @@ class TestAIAnalyzer:
             analyzer = AIAnalyzer.__new__(AIAnalyzer)
             analyzer._agent_coordinator = mock_coordinator
             analyzer._risk_manager_agent = mock_risk_manager
-            analyzer._portfolio_manager = mock_portfolio_manager
+            analyzer._decision_maker = mock_decision_maker
             analyzer._portfolio_service = mock_portfolio_service
 
             result = await analyzer.analyze(sample_analysis_context)
@@ -135,24 +136,24 @@ class TestAIAnalyzer:
             metadata={"max_position_size": 0.3, "risk_score": 40},
         )
 
-        mock_portfolio_signal = AgentSignal(
-            agent_name="PortfolioManagerAgent",
+        mock_decision_signal = AgentSignal(
+            agent_name="DecisionMakerAgent",
             signal=SignalType.BUY,
             confidence=85,
             reasoning="Strong fundamentals and technicals",
             metadata={
-                "action": "BUY",
+                "decision": "buy",
                 "position_ratio": 0.25,
-                "key_factors": ["估值合理", "趋势向上"],
-                "risk_assessment": {"level": "medium", "concerns": ["市场波动"]},
+                "key_considerations": ["估值合理", "趋势向上"],
+                "risks_identified": ["市场波动"],
             },
         )
 
         mock_risk_manager = MagicMock()
         mock_risk_manager.analyze = AsyncMock(return_value=mock_risk_signal)
 
-        mock_portfolio_manager = MagicMock()
-        mock_portfolio_manager.analyze = AsyncMock(return_value=mock_portfolio_signal)
+        mock_decision_maker = MagicMock()
+        mock_decision_maker.analyze = AsyncMock(return_value=mock_decision_signal)
 
         mock_portfolio_service = MagicMock()
         mock_portfolio_service.get_positions = AsyncMock(return_value=[])
@@ -161,26 +162,26 @@ class TestAIAnalyzer:
             analyzer = AIAnalyzer.__new__(AIAnalyzer)
             analyzer._agent_coordinator = mock_coordinator
             analyzer._risk_manager_agent = mock_risk_manager
-            analyzer._portfolio_manager = mock_portfolio_manager
+            analyzer._decision_maker = mock_decision_maker
             analyzer._portfolio_service = mock_portfolio_service
 
             result = await analyzer.analyze(sample_analysis_context)
 
         assert result.dashboard is not None
         assert "final_decision" in result.dashboard
-        assert "key_factors" in result.dashboard
-        assert "risk_assessment" in result.dashboard
-        assert "agent_consensus" in result.dashboard
+        assert "key_considerations" in result.dashboard
+        assert "risks_identified" in result.dashboard
+        assert "agent_reports" in result.dashboard
 
         # Check final_decision structure
-        assert "action" in result.dashboard["final_decision"]
+        assert "decision" in result.dashboard["final_decision"]
         assert "confidence" in result.dashboard["final_decision"]
         assert "position_ratio" in result.dashboard["final_decision"]
 
-        # Check agent_consensus structure
-        assert "signals" in result.dashboard["agent_consensus"]
-        assert "confidences" in result.dashboard["agent_consensus"]
-        assert "consensus_level" in result.dashboard["agent_consensus"]
+        # Check agent_reports structure
+        assert "signals" in result.dashboard["agent_reports"]
+        assert "confidences" in result.dashboard["agent_reports"]
+        assert "consensus_level" in result.dashboard["agent_reports"]
 
     @pytest.mark.asyncio
     async def test_analyze_handles_exception_gracefully(self, sample_analysis_context):
@@ -307,25 +308,25 @@ class TestAIAnalyzer:
             metadata={"max_position_size": 0.25},
         )
 
-        mock_portfolio_signal = AgentSignal(
-            agent_name="PortfolioManagerAgent",
+        mock_decision_signal = AgentSignal(
+            agent_name="DecisionMakerAgent",
             signal=SignalType.HOLD,
             confidence=50,
             reasoning="Test",
-            metadata={"action": "HOLD", "position_ratio": 0.0, "key_factors": [], "risk_assessment": {}},
+            metadata={"decision": "hold", "position_ratio": 0.0, "key_considerations": [], "risks_identified": []},
         )
 
         mock_risk_manager = MagicMock()
         mock_risk_manager.analyze = AsyncMock(return_value=mock_risk_signal)
 
-        mock_portfolio_manager = MagicMock()
-        mock_portfolio_manager.analyze = AsyncMock(return_value=mock_portfolio_signal)
+        mock_decision_maker = MagicMock()
+        mock_decision_maker.analyze = AsyncMock(return_value=mock_decision_signal)
 
         with patch("ashare_analyzer.ai.analyzer.get_display"):
             analyzer = AIAnalyzer.__new__(AIAnalyzer)
             analyzer._agent_coordinator = mock_coordinator
             analyzer._risk_manager_agent = mock_risk_manager
-            analyzer._portfolio_manager = mock_portfolio_manager
+            analyzer._decision_maker = mock_decision_maker
 
             result = await analyzer.analyze(context)
 
@@ -490,6 +491,47 @@ class TestAIAnalyzerHelpers:
         assert snapshot["close"] == "N/A"
         assert snapshot["amplitude"] == "N/A"
 
+    def test_format_analysis_reports(self):
+        """Test _format_analysis_reports converts signals to reports."""
+        analyzer = AIAnalyzer.__new__(AIAnalyzer)
+        analyzer._agent_coordinator = MagicMock()
+
+        agent_signals = {
+            "TechnicalAgent": {
+                "signal": "buy",
+                "confidence": 80,
+                "reasoning": "MACD金叉，趋势向上",
+                "metadata": {"trend_assessment": "bullish", "trend_strength": 75},
+            },
+            "ValuationAgent": {
+                "signal": "hold",
+                "confidence": 60,
+                "reasoning": "估值合理",
+                "metadata": {"margin_of_safety": 0.15},
+            },
+        }
+
+        reports = analyzer._format_analysis_reports(agent_signals)
+
+        assert len(reports) == 2
+        assert reports[0]["analyst"] == "TechnicalAgent"
+        assert reports[0]["conclusion"] == "buy"
+        assert reports[0]["confidence"] == 80
+        assert "MACD" in reports[0]["reasoning"]
+        assert reports[0]["key_metrics"]["trend"] == "bullish"
+
+        assert reports[1]["analyst"] == "ValuationAgent"
+        assert reports[1]["conclusion"] == "hold"
+
+    def test_format_analysis_reports_empty(self):
+        """Test _format_analysis_reports with empty signals."""
+        analyzer = AIAnalyzer.__new__(AIAnalyzer)
+        analyzer._agent_coordinator = MagicMock()
+
+        reports = analyzer._format_analysis_reports({})
+
+        assert reports == []
+
 
 class TestAIAnalyzerDecisionDashboard:
     """Tests for decision dashboard building."""
@@ -499,15 +541,15 @@ class TestAIAnalyzerDecisionDashboard:
         analyzer = AIAnalyzer.__new__(AIAnalyzer)
         analyzer._agent_coordinator = MagicMock()
 
-        # Create a mock final signal
+        # Create a mock final signal (DecisionMakerAgent format)
         mock_signal = MagicMock()
         mock_signal.confidence = 80
-        mock_signal.reasoning = "Strong buy signal"
+        mock_signal.reasoning = "Strong buy signal based on technical analysis"
         mock_signal.metadata = {
-            "action": "BUY",
+            "decision": "buy",
             "position_ratio": 0.25,
-            "key_factors": ["趋势向上", "估值合理"],
-            "risk_assessment": {"level": "low", "concerns": []},
+            "key_considerations": ["趋势向上", "估值合理"],
+            "risks_identified": ["市场波动"],
             "current_position": "none",
         }
 
@@ -520,11 +562,12 @@ class TestAIAnalyzerDecisionDashboard:
 
         dashboard = analyzer._build_decision_dashboard(mock_signal, agent_signals, 0.8, context)
 
-        assert dashboard["final_decision"]["action"] == "BUY"
+        assert dashboard["final_decision"]["decision"] == "BUY"
         assert dashboard["final_decision"]["confidence"] == 80
         assert dashboard["final_decision"]["position_ratio"] == "25%"
-        assert len(dashboard["key_factors"]) == 2
-        assert dashboard["agent_consensus"]["consensus_level"] == "80%"
+        assert len(dashboard["key_considerations"]) == 2
+        assert len(dashboard["risks_identified"]) == 1
+        assert dashboard["agent_reports"]["consensus_level"] == "80%"
 
     def test_build_decision_summary(self):
         """Test _build_decision_summary returns formatted text."""
@@ -533,22 +576,22 @@ class TestAIAnalyzerDecisionDashboard:
 
         mock_signal = MagicMock()
         mock_signal.confidence = 75
-        mock_signal.metadata = {"action": "BUY"}
+        mock_signal.metadata = {"decision": "buy"}
 
         agent_signals = {
             "TechnicalAgent": {"signal": "buy", "confidence": 80},
-            "FundamentalAgent": {"signal": "hold", "confidence": 50},
+            "FundamentalAgent": {"signal": "sell", "confidence": 50},
         }
 
-        key_factors = ["趋势向上", "估值合理"]
+        key_considerations = ["趋势向上", "估值合理"]
 
-        summary = analyzer._build_decision_summary(mock_signal, agent_signals, 0.75, key_factors)
+        summary = analyzer._build_decision_summary(mock_signal, agent_signals, 0.75, key_considerations)
 
-        assert "最终决策: BUY" in summary
+        assert "LLM决策: BUY" in summary
         assert "置信度: 75%" in summary
         assert "共识度: 75%" in summary
-        assert "关键因子" in summary
-        assert "TechnicalAgent" in summary
+        assert "关键考量" in summary
+        assert "1买/1卖" in summary  # 1 buy, 1 sell
 
     def test_build_analysis_result_from_decision_buy(self):
         """Test building AnalysisResult for BUY decision."""
@@ -556,14 +599,14 @@ class TestAIAnalyzerDecisionDashboard:
         analyzer._agent_coordinator = MagicMock()
 
         mock_signal = MagicMock()
-        mock_signal.signal = "buy"  # String representation for dict lookup
+        mock_signal.signal = SignalType.BUY
         mock_signal.confidence = 85
         mock_signal.reasoning = "Strong buy signal"
         mock_signal.metadata = {
-            "action": "BUY",
+            "decision": "buy",
             "position_ratio": 0.25,
-            "key_factors": ["趋势向上"],
-            "risk_assessment": {"level": "low", "concerns": []},
+            "key_considerations": ["趋势向上"],
+            "risks_identified": [],
         }
 
         agent_signals = {
@@ -598,14 +641,14 @@ class TestAIAnalyzerDecisionDashboard:
         analyzer._agent_coordinator = MagicMock()
 
         mock_signal = MagicMock()
-        mock_signal.signal = "sell"  # String representation for dict lookup
+        mock_signal.signal = SignalType.SELL
         mock_signal.confidence = 75
         mock_signal.reasoning = "Sell signal"
         mock_signal.metadata = {
-            "action": "SELL",
+            "decision": "sell",
             "position_ratio": 1.0,  # Full exit
-            "key_factors": ["趋势向下"],
-            "risk_assessment": {"level": "high", "concerns": ["市场风险"]},
+            "key_considerations": ["趋势向下"],
+            "risks_identified": ["市场风险"],
         }
 
         agent_signals = {
@@ -638,10 +681,10 @@ class TestAIAnalyzerDecisionDashboard:
         mock_signal.confidence = 50
         mock_signal.reasoning = "Hold signal"
         mock_signal.metadata = {
-            "action": "HOLD",
+            "decision": "hold",
             "position_ratio": 0.0,
-            "key_factors": [],
-            "risk_assessment": {"level": "medium", "concerns": []},
+            "key_considerations": [],
+            "risks_identified": [],
         }
 
         agent_signals = {}

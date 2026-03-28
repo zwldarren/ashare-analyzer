@@ -15,13 +15,59 @@ Inspired by ai-hedge-fund's Fundamentals Analyst.
 import logging
 from typing import Any
 
+from ashare_analyzer.ai.tools import ANALYZE_SIGNAL_TOOL
 from ashare_analyzer.exceptions import handle_errors
 from ashare_analyzer.models import AgentSignal, SignalType
 
 from .base import BaseAgent
-from .utils import FinancialScorer
+from .utils import FinancialScorer, score_to_signal
 
 logger = logging.getLogger(__name__)
+
+# System prompt for fundamental analysis
+FUNDAMENTAL_SYSTEM_PROMPT = """You are a professional fundamental analyst for A-share market.
+
+Your task: Analyze financial metrics to assess company health and generate trading signals.
+
+=== Key Metrics You'll Receive ===
+- Profitability: ROE, ROA, net_margin, gross_margin
+- Health: debt_to_equity, current_ratio, interest_coverage
+- Growth: revenue_growth, earnings_growth
+- Consistency: eps_consistency, revenue_consistency
+
+=== Interpretation Guidelines ===
+- ROE > 15% is excellent, but consider industry norms
+- Debt-to-equity < 0.5 is generally safe, but utilities/financials can have higher
+- Consider earnings quality, not just growth rate
+- Look for consistency patterns over time
+- Compare metrics to industry averages when available
+
+=== Signal Guidelines ===
+BUY conditions:
+- Strong profitability (ROE > 15%, net margin > 10%)
+- Healthy balance sheet (debt-to-equity < 0.5, current ratio > 1.5)
+- Positive growth trajectory
+- Consistent earnings
+
+SELL conditions:
+- Weak profitability (ROE < 5%, net margin < 5%)
+- High leverage (debt-to-equity > 1.0)
+- Declining revenues or earnings
+- Financial distress signs
+
+HOLD conditions:
+- Mixed signals
+- Adequate but not exceptional metrics
+- Uncertainty about future prospects
+
+=== Confidence Levels ===
+- 90-100%: Strong fundamentals across all dimensions
+- 70-89%: Good fundamentals with minor concerns
+- 50-69%: Mixed signals or limited data
+- 30-49%: Weak fundamentals or significant concerns
+- 10-29%: Poor fundamentals across multiple dimensions
+
+Use the analyze_signal function to return your analysis."""
 
 
 class FundamentalAgent(BaseAgent):
@@ -34,14 +80,11 @@ class FundamentalAgent(BaseAgent):
     - Earnings stability and growth
     - Balance sheet strength
 
-    All analysis is quantitative without LLM involvement.
-
-    Attributes:
-        None - uses context data only
+    Uses LLM for analysis when available, with heuristic fallback.
 
     Example:
         agent = FundamentalAgent()
-        signal = agent.analyze({
+        signal = await agent.analyze({
             "code": "600519",
             "stock_name": "贵州茅台",
             "financial_data": {...}
@@ -51,7 +94,124 @@ class FundamentalAgent(BaseAgent):
     def __init__(self):
         """Initialize the Fundamental Agent."""
         super().__init__("FundamentalAgent")
-        self._logger = logging.getLogger(__name__)
+        self._ensure_llm_client()
+
+    def _build_fundamental_prompt(self, stock_code: str, financial_data: dict[str, Any]) -> str:
+        """Build the fundamental analysis prompt for LLM."""
+        # Build metrics sections
+        profitability = []
+        if financial_data.get("roe"):
+            profitability.append(f"- ROE: {financial_data['roe']:.2f}%")
+        if financial_data.get("roa"):
+            profitability.append(f"- ROA: {financial_data['roa']:.2f}%")
+        if financial_data.get("net_margin"):
+            profitability.append(f"- Net Margin: {financial_data['net_margin']:.2f}%")
+        if financial_data.get("gross_margin"):
+            profitability.append(f"- Gross Margin: {financial_data['gross_margin']:.2f}%")
+
+        health = []
+        if financial_data.get("debt_to_equity") is not None:
+            health.append(f"- Debt-to-Equity: {financial_data['debt_to_equity']:.2f}")
+        if financial_data.get("current_ratio"):
+            health.append(f"- Current Ratio: {financial_data['current_ratio']:.2f}")
+        if financial_data.get("interest_coverage"):
+            health.append(f"- Interest Coverage: {financial_data['interest_coverage']:.2f}")
+
+        growth = []
+        if financial_data.get("revenue_growth") is not None:
+            growth.append(f"- Revenue Growth: {financial_data['revenue_growth']:.2f}%")
+        if financial_data.get("earnings_growth") is not None:
+            growth.append(f"- Earnings Growth: {financial_data['earnings_growth']:.2f}%")
+
+        consistency = []
+        if financial_data.get("eps_consistency") is not None:
+            consistency.append(f"- EPS Consistency: {financial_data['eps_consistency']:.1f}%")
+        if financial_data.get("revenue_consistency") is not None:
+            consistency.append(f"- Revenue Consistency: {financial_data['revenue_consistency']:.1f}%")
+
+        # Build the prompt
+        sections = [f"=== {stock_code} Fundamental Analysis ===", "", "=== Profitability Metrics ==="]
+        if profitability:
+            sections.extend(profitability)
+        else:
+            sections.append("No profitability data available")
+
+        sections.extend(["", "=== Financial Health ==="])
+        if health:
+            sections.extend(health)
+        else:
+            sections.append("No health metrics available")
+
+        sections.extend(["", "=== Growth Metrics ==="])
+        if growth:
+            sections.extend(growth)
+        else:
+            sections.append("No growth data available")
+
+        sections.extend(["", "=== Consistency Metrics ==="])
+        if consistency:
+            sections.extend(consistency)
+        else:
+            sections.append("No consistency data available")
+
+        sections.extend(["", "请根据以上财务指标进行分析，使用 analyze_signal 函数返回交易信号。"])
+
+        return "\n".join(sections)
+
+    async def _analyze_with_llm(self, stock_code: str, financial_data: dict[str, Any]) -> dict[str, Any] | None:
+        """Use LLM for fundamental analysis with Function Call."""
+        if not self._llm_client:
+            return None
+
+        try:
+            prompt = self._build_fundamental_prompt(stock_code, financial_data)
+
+            self._logger.debug(f"[{stock_code}] FundamentalAgent calling LLM...")
+            result = await self._llm_client.generate_with_tool(
+                prompt=prompt,
+                tool=ANALYZE_SIGNAL_TOOL,
+                generation_config={"temperature": 0.2, "max_output_tokens": 1024},
+                system_prompt=FUNDAMENTAL_SYSTEM_PROMPT,
+                agent_name="FundamentalAgent",
+            )
+
+            if result and "signal" in result:
+                self._logger.debug(f"[{stock_code}] LLM fundamental analysis successful: {result}")
+                return result
+            else:
+                self._logger.warning(f"[{stock_code}] LLM fundamental analysis returned invalid format")
+                return None
+
+        except Exception as e:
+            self._logger.error(f"[{stock_code}] LLM fundamental analysis failed: {e}")
+            return None
+
+    def _build_signal_from_llm(self, llm_analysis: dict[str, Any], financial_data: dict[str, Any]) -> AgentSignal:
+        """Build AgentSignal from LLM analysis result."""
+        signal_str = llm_analysis.get("signal", "hold")
+        signal = SignalType.from_string(signal_str)
+        confidence = llm_analysis.get("confidence", 50)
+        reasoning = llm_analysis.get("reasoning", "无详细分析")
+        key_metrics = llm_analysis.get("key_metrics", {})
+
+        # Build metadata with key financials
+        metadata = {
+            "analysis_method": "llm",
+            "roe": financial_data.get("roe"),
+            "net_margin": financial_data.get("net_margin"),
+            "debt_to_equity": financial_data.get("debt_to_equity"),
+            "current_ratio": financial_data.get("current_ratio"),
+            "revenue_growth": financial_data.get("revenue_growth"),
+        }
+        metadata.update(key_metrics)
+
+        return AgentSignal(
+            agent_name=self.name,
+            signal=signal,
+            confidence=confidence,
+            reasoning=reasoning,
+            metadata=metadata,
+        )
 
     def is_available(self) -> bool:
         """Always available - only requires context data."""
@@ -60,7 +220,7 @@ class FundamentalAgent(BaseAgent):
     @handle_errors("基本面分析失败", default_return=None)
     async def analyze(self, context: dict[str, Any]) -> AgentSignal:
         """
-        Execute fundamental analysis (async).
+        Execute fundamental analysis using LLM (async).
 
         Args:
             context: Analysis context containing:
@@ -81,11 +241,9 @@ class FundamentalAgent(BaseAgent):
             AgentSignal with fundamental-based trading signal
         """
         stock_code = context.get("code", "")
-
-        self._logger.debug(f"[{stock_code}] FundamentalAgent开始基本面分析")
-
-        # Get financial data from context
         financial_data = context.get("financial_data", {})
+
+        self._logger.debug(f"[{stock_code}] FundamentalAgent starting analysis")
 
         if not financial_data:
             return AgentSignal(
@@ -95,6 +253,21 @@ class FundamentalAgent(BaseAgent):
                 reasoning="无财务数据可用",
                 metadata={"error": "no_financial_data"},
             )
+
+        # Try LLM analysis first
+        if self._llm_client and self._llm_client.is_available():
+            llm_result = await self._analyze_with_llm(stock_code, financial_data)
+            if llm_result:
+                return self._build_signal_from_llm(llm_result, financial_data)
+
+        # Fallback to heuristic analysis
+        self._logger.warning(f"[{stock_code}] LLM unavailable, using heuristic fallback")
+        return await self._heuristic_analysis(context)
+
+    async def _heuristic_analysis(self, context: dict[str, Any]) -> AgentSignal:
+        """Fallback heuristic analysis when LLM is unavailable."""
+        stock_code = context.get("code", "")
+        financial_data = context.get("financial_data", {})
 
         # 检查是否有基本财务数据（ROE等）还是只有PE/PB
         has_basic_metrics = any(
@@ -146,6 +319,7 @@ class FundamentalAgent(BaseAgent):
             confidence=confidence,
             reasoning=reasoning,
             metadata={
+                "analysis_method": "heuristic",
                 "total_score": round(total_score, 1),
                 "profitability_score": profitability_score,
                 "health_score": health_score,
@@ -280,30 +454,7 @@ class FundamentalAgent(BaseAgent):
         return min(score, 10)
 
     def _score_to_signal(self, score: float) -> tuple[SignalType, int]:
-        """
-        Convert fundamental score to signal and confidence.
-
-        Signal thresholds:
-        - BUY: score >= 70 (strong fundamentals)
-        - SELL: score <= 30 (weak fundamentals)
-        - HOLD: 30 < score < 70 (mixed fundamentals)
-
-        Confidence calculation:
-        - Based on distance from neutral zone (50)
-        """
-        if score >= 70:
-            # Strong buy zone
-            confidence = min(100, int(50 + (score - 70) * 1.5))
-            return (SignalType.BUY, confidence)
-        elif score <= 30:
-            # Strong sell zone
-            confidence = min(100, int(50 + (30 - score) * 1.5))
-            return (SignalType.SELL, confidence)
-        else:
-            # Hold zone - confidence based on certainty
-            distance_from_neutral = abs(score - 50)
-            confidence = max(30, int(50 + distance_from_neutral))
-            return (SignalType.HOLD, confidence)
+        return score_to_signal(score, buy_threshold=70.0, sell_threshold=30.0)
 
     def _analyze_with_basic_data(self, stock_code: str, financial_data: dict[str, Any]) -> AgentSignal:
         """

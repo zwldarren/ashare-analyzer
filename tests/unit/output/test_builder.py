@@ -30,7 +30,7 @@ class TestReportBuilder:
             position_ratio=0.15,
             decision_reasoning="技术面向好，基本面优秀",
             dashboard={
-                "agent_consensus": {
+                "agent_reports": {
                     "signals": {"TechnicalAgent": "buy", "RiskAgent": "hold"},
                     "confidences": {"TechnicalAgent": 80, "RiskAgent": 50},
                     "reasonings": {
@@ -39,7 +39,7 @@ class TestReportBuilder:
                     },
                     "consensus_level": "high",
                 },
-                "key_factors": ["MA金叉", "放量突破", "业绩超预期"],
+                "key_considerations": ["MA金叉", "放量突破", "业绩超预期"],
             },
             market_snapshot={
                 "close": "1800.50",
@@ -278,7 +278,7 @@ class TestReportBuilder:
             trend_prediction="",
             operation_advice="",
             dashboard={
-                "key_factors": ["Factor1", "Factor2", "Factor3", "Factor4", "Factor5"],
+                "key_considerations": ["Factor1", "Factor2", "Factor3", "Factor4", "Factor5"],
             },
         )
 
@@ -295,7 +295,7 @@ class TestReportBuilder:
             trend_prediction="",
             operation_advice="",
             dashboard={
-                "agent_consensus": {
+                "agent_reports": {
                     "signals": {"Agent1": "buy"},
                     "confidences": {"Agent1": "85"},  # String instead of int
                     "reasonings": {"Agent1": "Test"},

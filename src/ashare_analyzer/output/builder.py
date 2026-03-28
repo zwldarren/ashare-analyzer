@@ -80,8 +80,8 @@ class ReportBuilder:
 
         # Extract dashboard data
         dashboard = result.dashboard or {}
-        agent_consensus = dashboard.get("agent_consensus", {})
-        key_factors = dashboard.get("key_factors", [])
+        agent_consensus = dashboard.get("agent_reports", {})
+        key_factors = dashboard.get("key_considerations", [])
 
         # Ensure key_factors is a list
         if not isinstance(key_factors, list):

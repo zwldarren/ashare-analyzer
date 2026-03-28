@@ -489,3 +489,75 @@ def interpret_adx(adx: float) -> str:
         return "developing_trend"
     else:
         return "weak_or_no_trend"
+
+
+def interpret_volume(volume_ratio: float) -> str:
+    """Interpret volume ratio status."""
+    if volume_ratio > 2.0:
+        return "显著放量"
+    elif volume_ratio > 1.5:
+        return "温和放量"
+    elif volume_ratio > 0.8:
+        return "量能正常"
+    elif volume_ratio > 0.5:
+        return "轻度缩量"
+    else:
+        return "明显缩量"
+
+
+def interpret_rsi_cn(rsi: float) -> str:
+    """Interpret RSI value (Chinese)."""
+    if rsi >= 80:
+        return "严重超买"
+    elif rsi >= 70:
+        return "超买"
+    elif rsi >= 50:
+        return "偏强"
+    elif rsi >= 30:
+        return "偏弱"
+    elif rsi >= 20:
+        return "超卖"
+    else:
+        return "严重超卖"
+
+
+def interpret_macd_cn(macd: float, signal: float, histogram: float) -> str:
+    """Interpret MACD indicator (Chinese)."""
+    if histogram > 0:
+        if macd > signal:
+            return "多头增强" if histogram > 0 else "多头减弱"
+        else:
+            return "多头减弱"
+    else:
+        if macd < signal:
+            return "空头增强" if histogram < 0 else "空头减弱"
+        else:
+            return "空头减弱"
+
+
+def interpret_adx_cn(adx: float) -> str:
+    """Interpret ADX trend strength (Chinese)."""
+    if adx >= 50:
+        return "极强趋势"
+    elif adx >= 40:
+        return "很强趋势"
+    elif adx >= 25:
+        return "明显趋势"
+    elif adx >= 20:
+        return "趋势形成"
+    else:
+        return "无趋势"
+
+
+def interpret_stochastic_cn(k: float, d: float) -> str:
+    """Interpret Stochastic oscillator (Chinese)."""
+    if k >= 80 and d >= 80:
+        return "超买区"
+    elif k <= 20 and d <= 20:
+        return "超卖区"
+    elif k > d:
+        return "金叉看涨"
+    elif k < d:
+        return "死叉看跌"
+    else:
+        return "中性"

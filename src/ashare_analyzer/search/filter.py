@@ -226,6 +226,7 @@ class NewsFilter:
             tool=self.FILTER_TOOL,
             generation_config={"temperature": 0.1},
             system_prompt=self.FILTER_SYSTEM_PROMPT,
+            agent_name="NewsFilter",
         )
 
         if result is None:

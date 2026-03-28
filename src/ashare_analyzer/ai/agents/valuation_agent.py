@@ -16,6 +16,7 @@ All calculations use ONLY actual data, no estimations or defaults.
 import logging
 from typing import Any
 
+from ashare_analyzer.ai.tools import ANALYZE_SIGNAL_TOOL
 from ashare_analyzer.constants import A_SHARE_RISK_FREE_RATE, A_SHARE_RISK_PREMIUM
 from ashare_analyzer.exceptions import handle_errors
 from ashare_analyzer.models import AgentSignal, SignalType
@@ -34,6 +35,56 @@ from ashare_analyzer.valuation import (
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
+
+# System prompt for valuation analysis
+VALUATION_SYSTEM_PROMPT = """You are a professional valuation analyst for A-share market.
+
+Your task: Assess whether a stock is fairly valued based on multiple valuation methods.
+
+=== Key Metrics You'll Receive ===
+- Fair value: Calculated fair value from multiple methods
+- Current price: Market price
+- Margin of safety: (Fair value - Current price) / Current price
+- Stock type: Value, Growth, Cyclical, Financial, or Loss-making
+- Valuation methods used: Which methods contributed to fair value
+
+=== Interpretation Guidelines ===
+Margin of Safety:
+- Positive margin means stock is undervalued (fair value > current price)
+- Negative margin means stock is overvalued (fair value < current price)
+- Consider stock type when interpreting margin
+
+Stock Type Considerations:
+- Value stocks: Focus on margin of safety, look for >20% discount
+- Growth stocks: Higher P/E acceptable if growth justifies it
+- Cyclical stocks: Consider cycle position, be cautious at peak
+- Financial stocks: P/B more relevant than P/E
+- Loss-making: Valuation methods less reliable, higher uncertainty
+
+=== Signal Guidelines ===
+BUY conditions:
+- Strong margin of safety (>20% undervalued)
+- Multiple valuation methods agree
+- Stock type appropriate for valuation method
+
+SELL conditions:
+- Significant overvaluation (>20% overvalued)
+- Valuation methods deteriorating
+- Stock type mismatch with valuation
+
+HOLD conditions:
+- Fair value close to current price (±10%)
+- Mixed signals from methods
+- Uncertain stock type
+
+=== Confidence Levels ===
+- 90-100%: Clear valuation signal with multiple methods confirming
+- 70-89%: Good valuation signal with minor data gaps
+- 50-69%: Moderate certainty, some method limitations
+- 30-49%: Limited data or conflicting signals
+- 10-29%: Poor data quality or unreliable valuation
+
+Use the analyze_signal function to return your analysis."""
 
 
 class ValuationAgent(BaseAgent):
@@ -63,36 +114,153 @@ class ValuationAgent(BaseAgent):
     def __init__(self):
         """Initialize the Valuation Agent."""
         super().__init__("ValuationAgent")
-        self._logger = logging.getLogger(__name__)
+        self._ensure_llm_client()
 
     def is_available(self) -> bool:
         """Always available - only requires context data."""
         return True
 
+    def _build_valuation_prompt(
+        self,
+        stock_code: str,
+        valuation_data: dict[str, Any],
+        fair_value: float,
+        current_price: float,
+        margin: float,
+        stock_type: Any,
+    ) -> str:
+        """Build the valuation analysis prompt for LLM."""
+        # Stock type name mapping
+        type_names = {
+            "value": "价值型",
+            "growth": "成长型",
+            "cyclical": "周期型",
+            "financial": "金融型",
+            "loss_making": "亏损型",
+            "default": "默认型",
+        }
+        stock_type_name = type_names.get(
+            str(stock_type).lower() if stock_type else "default", "默认型"
+        )
+
+        # Build valuation methods info
+        methods_info = []
+        if valuation_data.get("pe_ratio"):
+            methods_info.append(f"- P/E Ratio: {valuation_data['pe_ratio']:.2f}")
+        if valuation_data.get("pb_ratio"):
+            methods_info.append(f"- P/B Ratio: {valuation_data['pb_ratio']:.2f}")
+        if valuation_data.get("ps_ratio"):
+            methods_info.append(f"- P/S Ratio: {valuation_data['ps_ratio']:.2f}")
+        if valuation_data.get("dividend_yield"):
+            methods_info.append(f"- Dividend Yield: {valuation_data['dividend_yield']:.2f}%")
+        if valuation_data.get("roe"):
+            methods_info.append(f"- ROE: {valuation_data['roe']:.2f}%")
+
+        sections = [
+            f"=== {stock_code} Valuation Analysis ===",
+            "",
+            "=== Key Valuation Metrics ===",
+            f"- Fair Value: ¥{fair_value:.2f}",
+            f"- Current Price: ¥{current_price:.2f}",
+            f"- Margin of Safety: {margin * 100:+.2f}%",
+            f"- Stock Type: {stock_type_name}",
+            "",
+            "=== Available Valuation Data ===",
+        ]
+        if methods_info:
+            sections.extend(methods_info)
+        else:
+            sections.append("Limited valuation data available")
+
+        sections.extend(["", "请根据以上估值数据分析，使用 analyze_signal 函数返回交易信号。"])
+
+        return "\n".join(sections)
+
+    async def _analyze_with_llm(
+        self,
+        stock_code: str,
+        valuation_data: dict[str, Any],
+        fair_value: float,
+        current_price: float,
+        margin: float,
+        stock_type: Any,
+    ) -> dict[str, Any] | None:
+        """Use LLM for valuation analysis with Function Call."""
+        if not self._llm_client:
+            return None
+
+        try:
+            prompt = self._build_valuation_prompt(
+                stock_code, valuation_data, fair_value, current_price, margin, stock_type
+            )
+
+            self._logger.debug(f"[{stock_code}] ValuationAgent calling LLM...")
+            result = await self._llm_client.generate_with_tool(
+                prompt=prompt,
+                tool=ANALYZE_SIGNAL_TOOL,
+                generation_config={"temperature": 0.2, "max_output_tokens": 1024},
+                system_prompt=VALUATION_SYSTEM_PROMPT,
+                agent_name="ValuationAgent",
+            )
+
+            if result and "signal" in result:
+                self._logger.debug(f"[{stock_code}] LLM valuation analysis successful: {result}")
+                return result
+            else:
+                self._logger.warning(f"[{stock_code}] LLM valuation analysis returned invalid format")
+                return None
+
+        except Exception as e:
+            self._logger.error(f"[{stock_code}] LLM valuation analysis failed: {e}")
+            return None
+
+    def _build_signal_from_llm(
+        self,
+        llm_analysis: dict[str, Any],
+        fair_value: float,
+        current_price: float,
+        margin: float,
+        stock_type: Any,
+        valuation_data: dict[str, Any],
+        valuations: dict[str, float],
+        weights: dict[str, float],
+        confidence_decay: float,
+    ) -> AgentSignal:
+        """Build AgentSignal from LLM analysis result."""
+        signal_str = llm_analysis.get("signal", "hold")
+        signal = SignalType.from_string(signal_str)
+        confidence = llm_analysis.get("confidence", 50)
+        reasoning = llm_analysis.get("reasoning", "无详细分析")
+        key_metrics = llm_analysis.get("key_metrics", {})
+
+        # Build metadata - match fields from _heuristic_analysis for consistency
+        metadata = {
+            "analysis_method": "llm",
+            "fair_value": round(fair_value, 2),
+            "current_price": current_price,
+            "margin_of_safety": round(margin * 100, 1),
+            "stock_type": stock_type.value if stock_type else "default",
+            "valuations": {k: round(v, 2) for k, v in valuations.items()},
+            "method_weights": weights,
+            "confidence_decay": round(confidence_decay, 2),
+        }
+        metadata.update(key_metrics)
+
+        return AgentSignal(
+            agent_name=self.name,
+            signal=signal,
+            confidence=confidence,
+            reasoning=reasoning,
+            metadata=metadata,
+        )
+
     @handle_errors("估值分析失败", default_return=None)
     async def analyze(self, context: dict[str, Any]) -> AgentSignal:
         """
-        Execute valuation analysis using multi-factor adaptive approach (async).
+        Execute valuation analysis using LLM (async).
 
         Args:
-            context: Analysis context containing:
-                - code: Stock code
-                - stock_name: Stock name
-                - current_price: Current stock price
-                - valuation_data: Valuation inputs dict with keys:
-                    - eps: Earnings per share
-                    - book_value_per_share: Book value per share
-                    - pe_ratio: P/E ratio
-                    - pb_ratio: P/B ratio
-                    - ps_ratio: P/S ratio
-                    - roe: Return on equity (%)
-                    - dividend_yield: Dividend yield (%)
-                    - revenue_growth: Revenue growth rate (%)
-                    - industry: Industry name
-                    - industry_pe: Industry average P/E
-                    - industry_pb: Industry average P/B
-                    - historical_pb_median: Historical median P/B
-                    - historical_ps_median: Historical median P/S
+            context: Analysis context containing valuation_data and current_price
 
         Returns:
             AgentSignal with valuation-based trading signal
@@ -100,9 +268,8 @@ class ValuationAgent(BaseAgent):
         stock_code = context.get("code", "")
         current_price = context.get("current_price", 0)
 
-        self._logger.debug(f"[{stock_code}] ValuationAgent开始估值分析")
+        self._logger.debug(f"[{stock_code}] ValuationAgent starting analysis")
 
-        # Get valuation data from context
         valuation_data = context.get("valuation_data", {})
 
         if not valuation_data or current_price <= 0:
@@ -114,7 +281,7 @@ class ValuationAgent(BaseAgent):
                 metadata={"error": "no_valuation_data"},
             )
 
-        # Step 1: Classify stock type
+        # Step 1: Classify stock type (always needed)
         stock_type = self._classify_stock(valuation_data)
         self._logger.debug(f"[{stock_code}] 股票类型: {stock_type.value}")
 
@@ -122,7 +289,7 @@ class ValuationAgent(BaseAgent):
         selection = select_valuation_methods(stock_type)
         self._logger.debug(f"[{stock_code}] 选用方法: {selection.methods}, 权重: {selection.weights}")
 
-        # Step 3: Calculate valuations for each method
+        # Step 3: Calculate valuations (always needed for LLM context)
         valuations, decay_factors = self._calculate_valuations(selection.methods, valuation_data, current_price)
 
         if not valuations:
@@ -145,50 +312,73 @@ class ValuationAgent(BaseAgent):
         # Step 5: Calculate margin
         margin = (fair_value - current_price) / current_price if current_price > 0 else 0
 
-        # Step 6: Generate signal based on margin
-        signal, base_confidence = self._margin_to_signal(margin)
+        # Try LLM analysis first
+        if self._llm_client and self._llm_client.is_available():
+            llm_result = await self._analyze_with_llm(
+                stock_code, valuation_data, fair_value, current_price, margin, stock_type
+            )
+            if llm_result:
+                return self._build_signal_from_llm(
+                    llm_result,
+                    fair_value,
+                    current_price,
+                    margin,
+                    stock_type,
+                    valuation_data,
+                    valuations,
+                    selection.weights,
+                    confidence_decay,
+                )
 
-        # Step 7: Apply confidence decay
+        # Fallback to heuristic analysis
+        self._logger.warning(f"[{stock_code}] LLM unavailable, using heuristic fallback")
+        return await self._heuristic_analysis(
+            context, stock_type, fair_value, current_price, margin, valuations, selection.weights, confidence_decay
+        )
+
+    async def _heuristic_analysis(
+        self,
+        context: dict[str, Any],
+        stock_type: Any,
+        fair_value: float,
+        current_price: float,
+        margin: float,
+        valuations: dict[str, float],
+        weights: dict[str, float],
+        confidence_decay: float,
+    ) -> AgentSignal:
+        """Fallback heuristic analysis when LLM is unavailable."""
+        stock_code = context.get("code", "")
+
+        # Generate signal based on margin thresholds (heuristic)
+        signal, base_confidence = self._heuristic_margin_signal(margin)
+
+        # Apply confidence decay
         final_confidence = int(base_confidence * confidence_decay)
-        final_confidence = max(10, min(100, final_confidence))  # Clamp to [10, 100]
+        final_confidence = max(10, min(100, final_confidence))
 
-        # Step 8: Build reasoning
+        # Build reasoning
         reasoning = self._build_reasoning(
-            fair_value, current_price, margin, stock_type, valuations, selection.weights, confidence_decay
+            fair_value, current_price, margin, stock_type, valuations, weights, confidence_decay
         )
 
         self._logger.debug(
-            f"[{stock_code}] ValuationAgent分析完成: {signal} "
+            f"[{stock_code}] ValuationAgent heuristic analysis: {signal} "
             f"(公允价值¥{fair_value:.2f}, 安全边际{margin * 100:+.1f}%, "
-            f"置信度{final_confidence}%, 类型:{stock_type.value})"
+            f"置信度{final_confidence}%)"
         )
 
         # Build metadata
         metadata = {
+            "analysis_method": "heuristic_fallback",
             "fair_value": round(fair_value, 2),
             "current_price": current_price,
             "margin_of_safety": round(margin * 100, 1),
             "stock_type": stock_type.value,
             "valuations": {k: round(v, 2) for k, v in valuations.items()},
-            "method_weights": selection.weights,
+            "method_weights": weights,
             "confidence_decay": round(confidence_decay, 2),
-            "eps": valuation_data.get("eps") if valuation_data.get("eps", 0) > 0 else None,
-            "book_value_per_share": valuation_data.get("book_value_per_share")
-            if valuation_data.get("book_value_per_share", 0) > 0
-            else None,
         }
-
-        # Add industry info if available
-        industry_name = valuation_data.get("industry_name")
-        industry_pe = valuation_data.get("industry_pe")
-        industry_pb = valuation_data.get("industry_pb")
-
-        if industry_name:
-            metadata["industry_name"] = industry_name
-        if industry_pe and industry_pe > 0:
-            metadata["industry_pe"] = round(industry_pe, 2)
-        if industry_pb and industry_pb > 0:
-            metadata["industry_pb"] = round(industry_pb, 2)
 
         return AgentSignal(
             agent_name=self.name,
@@ -423,9 +613,9 @@ class ValuationAgent(BaseAgent):
 
         return fair_value, overall_decay
 
-    def _margin_to_signal(self, margin: float) -> tuple[SignalType, int]:
+    def _heuristic_margin_signal(self, margin: float) -> tuple[SignalType, int]:
         """
-        Convert margin to signal and base confidence.
+        Convert margin to signal and base confidence using heuristic rules.
 
         Signal thresholds (new adaptive approach):
         | Margin        | Signal | Base Confidence |

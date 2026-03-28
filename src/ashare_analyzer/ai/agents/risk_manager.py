@@ -6,7 +6,7 @@ Independent risk management agent focused on position sizing limits.
 This agent is responsible for:
 - Calculating maximum position size based on volatility
 - Providing risk constraints for portfolio decisions
-- NOT generating trading signals (that's PortfolioManager's job)
+- NOT generating trading signals (that's DecisionMakerAgent's job)
 
 Inspired by ai-hedge-fund's Risk Manager architecture.
 """
@@ -28,7 +28,7 @@ class RiskManagerAgent(BaseAgent):
     Risk Manager Agent for position sizing and risk constraints.
 
     This agent DOES NOT generate trading signals. Instead, it calculates
-    risk constraints that the PortfolioManager must respect.
+    risk constraints that the DecisionMakerAgent must respect.
 
     Key Outputs (in metadata):
     - max_position_size: Maximum allowed position (0-1)
@@ -57,7 +57,6 @@ class RiskManagerAgent(BaseAgent):
     def __init__(self):
         """Initialize the Risk Manager Agent."""
         super().__init__("RiskManagerAgent")
-        self._logger = logging.getLogger(__name__)
 
     def is_available(self) -> bool:
         """Always available - only requires context data."""
@@ -120,7 +119,7 @@ class RiskManagerAgent(BaseAgent):
             confidence=100,  # Confidence in risk calculation
             reasoning=reasoning,
             metadata={
-                # Core outputs for PortfolioManager
+                # Core outputs for DecisionMakerAgent
                 "max_position_size": round(final_limit, 3),
                 "base_position_limit": round(base_limit, 3),
                 "correlation_adjustment": round(correlation_adj, 3),

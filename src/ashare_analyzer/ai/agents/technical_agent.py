@@ -12,19 +12,19 @@ This agent analyzes technical indicators and uses LLM to:
 Combines algorithmic calculations with AI-driven interpretation.
 """
 
-import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from ashare_analyzer.ai.clients import get_llm_client
 from ashare_analyzer.ai.tools import ANALYZE_SIGNAL_TOOL
+from ashare_analyzer.analysis.indicators import (
+    interpret_adx_cn,
+    interpret_macd_cn,
+    interpret_rsi_cn,
+    interpret_stochastic_cn,
+    interpret_volume,
+)
 from ashare_analyzer.models import AgentSignal, SignalType
 
 from .base import BaseAgent
-
-if TYPE_CHECKING:
-    from ashare_analyzer.ai.clients import LiteLLMClient
-
-logger = logging.getLogger(__name__)
 
 # System prompt for technical analysis
 TECHNICAL_SYSTEM_PROMPT = """You are a professional technical analyst for A-share market.
@@ -90,17 +90,7 @@ class TechnicalAgent(BaseAgent):
     def __init__(self):
         """Initialize the Technical Agent."""
         super().__init__("TechnicalAgent")
-        self._logger = logging.getLogger(__name__)
-        self._llm_client: LiteLLMClient | None = None
-        self._init_llm_client()
-
-    def _init_llm_client(self) -> None:
-        """Initialize LLM client for analysis using shared factory."""
-        self._llm_client = get_llm_client()
-        if self._llm_client:
-            self._logger.debug("TechnicalAgent LLM client initialized successfully")
-        else:
-            self._logger.warning("No LLM API key configured, TechnicalAgent will use rule-based fallback")
+        self._ensure_llm_client()
 
     def is_available(self) -> bool:
         """Technical agent is always available with fallback."""
@@ -188,7 +178,7 @@ class TechnicalAgent(BaseAgent):
         resistance = max(close * 1.05, max(ma5, ma10, ma20) * 1.02 if ma20 > 0 else close * 1.03)
 
         # Volume analysis
-        volume_status = self._analyze_volume(volume_ratio)
+        volume_status = interpret_volume(volume_ratio)
 
         # Price change
         price_change = today.get("pct_chg", 0)
@@ -233,12 +223,12 @@ class TechnicalAgent(BaseAgent):
         }
 
         # Calculate additional derived metrics
-        technical_data["rsi_status"] = self._interpret_rsi(technical_data["rsi_14"])
-        technical_data["macd_status"] = self._interpret_macd(
+        technical_data["rsi_status"] = interpret_rsi_cn(technical_data["rsi_14"])
+        technical_data["macd_status"] = interpret_macd_cn(
             technical_data["macd"], technical_data["macd_signal"], technical_data["macd_hist"]
         )
-        technical_data["adx_status"] = self._interpret_adx(technical_data["adx"])
-        technical_data["stochastic_status"] = self._interpret_stochastic(
+        technical_data["adx_status"] = interpret_adx_cn(technical_data["adx"])
+        technical_data["stochastic_status"] = interpret_stochastic_cn(
             technical_data["stochastic_k"], technical_data["stochastic_d"]
         )
 
@@ -260,6 +250,7 @@ class TechnicalAgent(BaseAgent):
                 tool=ANALYZE_SIGNAL_TOOL,
                 generation_config={"temperature": 0.2, "max_output_tokens": 2048},
                 system_prompt=TECHNICAL_SYSTEM_PROMPT,
+                agent_name="TechnicalAgent",
             )
 
             if result and "signal" in result:
@@ -441,70 +432,3 @@ class TechnicalAgent(BaseAgent):
                 "analysis_method": "rule_based",
             },
         )
-
-    def _analyze_volume(self, volume_ratio: float) -> str:
-        """Analyze volume status."""
-        if volume_ratio > 2.0:
-            return "显著放量"
-        elif volume_ratio > 1.5:
-            return "温和放量"
-        elif volume_ratio > 0.8:
-            return "量能正常"
-        elif volume_ratio > 0.5:
-            return "轻度缩量"
-        else:
-            return "明显缩量"
-
-    def _interpret_rsi(self, rsi: float) -> str:
-        """Interpret RSI value."""
-        if rsi >= 80:
-            return "严重超买"
-        elif rsi >= 70:
-            return "超买"
-        elif rsi >= 50:
-            return "偏强"
-        elif rsi >= 30:
-            return "偏弱"
-        elif rsi >= 20:
-            return "超卖"
-        else:
-            return "严重超卖"
-
-    def _interpret_macd(self, macd: float, signal: float, histogram: float) -> str:
-        """Interpret MACD indicator."""
-        if histogram > 0:
-            if macd > signal:
-                return "多头增强" if histogram > 0 else "多头减弱"
-            else:
-                return "多头减弱"
-        else:
-            if macd < signal:
-                return "空头增强" if histogram < 0 else "空头减弱"
-            else:
-                return "空头减弱"
-
-    def _interpret_adx(self, adx: float) -> str:
-        """Interpret ADX trend strength."""
-        if adx >= 50:
-            return "极强趋势"
-        elif adx >= 40:
-            return "很强趋势"
-        elif adx >= 25:
-            return "明显趋势"
-        elif adx >= 20:
-            return "趋势形成"
-        else:
-            return "无趋势"
-
-    def _interpret_stochastic(self, k: float, d: float) -> str:
-        """Interpret Stochastic oscillator."""
-        if k >= 80 and d >= 80:
-            return "超买区"
-        elif k <= 20 and d <= 20:
-            return "超卖区"
-        elif k > d:
-            return "金叉看涨"
-        elif k < d:
-            return "死叉看跌"
-        else:
-            return "中性"

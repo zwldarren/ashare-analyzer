@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from typing import Any
 
 os.environ["LITELLM_LOG"] = "WARNING"
@@ -20,6 +21,11 @@ from litellm import acompletion
 from ashare_analyzer.config import get_config
 from ashare_analyzer.exceptions import AnalysisError
 from ashare_analyzer.utils import calculate_backoff_delay
+from ashare_analyzer.utils.llm_logger import (
+    log_llm_error,
+    log_llm_request,
+    log_llm_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +198,7 @@ class LiteLLMClient:
         tool: dict[str, Any],
         generation_config: dict[str, Any],
         system_prompt: str | None = None,
+        agent_name: str = "Unknown",
     ) -> dict[str, Any] | None:
         """
         Generate structured output using Function Call (async).
@@ -206,6 +213,7 @@ class LiteLLMClient:
             tool: Function tool schema dict
             generation_config: Generation config (temperature, max_tokens, timeout)
             system_prompt: Optional system prompt override
+            agent_name: Agent name for logging purposes
 
         Returns:
             Parsed tool call arguments as dict, or None on failure
@@ -224,6 +232,16 @@ class LiteLLMClient:
             {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
+
+        # 记录 LLM 请求
+        log_llm_request(
+            agent_name=agent_name,
+            model=self.model,
+            prompt=prompt,
+            tool=tool,
+            system_prompt=system_prompt or DEFAULT_SYSTEM_PROMPT,
+            generation_config={"temperature": temperature, "max_tokens": max_tokens, "timeout": timeout},
+        )
 
         last_error: Exception | None = None
         for model_idx, (model, api_key, base_url) in enumerate(self._get_models_to_try()):
@@ -252,26 +270,61 @@ class LiteLLMClient:
                     if base_url:
                         kwargs["api_base"] = base_url
 
+                    start_time = time.perf_counter()
                     response = await acompletion(**kwargs)
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+
                     if response and response.choices:
                         choice = response.choices[0]
                         if choice.message.tool_calls:
                             tool_call = choice.message.tool_calls[0]
                             result = json.loads(tool_call.function.arguments)
+                            if isinstance(result, str):
+                                result = json.loads(result)
+                            if not isinstance(result, dict):
+                                logger.warning(
+                                    f"[{model_name}] Function call returned non-dict: {type(result).__name__}"
+                                )
+                                last_error = Exception(f"Function call returned non-dict: {type(result).__name__}")
+                                continue
                             if model_idx > 0:
                                 logger.info(f"[{model_name}] 备用模型 Function call 成功")
+
+                            # 记录成功的响应
+                            log_llm_response(
+                                agent_name=agent_name,
+                                model=model_name,
+                                response=response,
+                                parsed_result=result,
+                                duration_ms=duration_ms,
+                            )
                             return result
                         if choice.message.content:
                             logger.warning(f"[{model_name}] No tool calls, got text: {choice.message.content[:200]}...")
+                            # 记录返回文本而非 tool calls 的情况
+                            log_llm_response(
+                                agent_name=agent_name,
+                                model=model_name,
+                                response=response,
+                                parsed_result=None,
+                                duration_ms=duration_ms,
+                            )
 
                     last_error = Exception("No tool calls in response")
 
                 except json.JSONDecodeError as e:
                     logger.error(f"[{model_name}] Failed to parse tool call arguments: {e}")
                     last_error = e
+                    log_llm_error(agent_name, model_name, e, {"tool_name": tool["function"]["name"]})
                 except Exception as e:
                     last_error = e
                     _log_error(model_name, e, attempt, max_retries)
+                    log_llm_error(
+                        agent_name,
+                        model_name,
+                        e,
+                        {"tool_name": tool["function"]["name"], "attempt": attempt + 1, "max_retries": max_retries},
+                    )
 
                 if attempt == max_retries - 1 and model_idx == 0 and self.has_fallback():
                     logger.warning(f"[{model_name}] 主模型失败，尝试备用模型...")

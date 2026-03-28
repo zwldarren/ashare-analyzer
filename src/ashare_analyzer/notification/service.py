@@ -15,7 +15,7 @@ from ashare_analyzer.models import AnalysisResult
 from ashare_analyzer.notification.context import MessageContext
 from ashare_analyzer.output import get_output_formatter
 
-from .base import ChannelDetector, NotificationChannel
+from .base import NotificationChannel, get_channel_name
 from .email import EmailChannel
 from .telegram import TelegramChannel
 
@@ -55,7 +55,7 @@ class NotificationService:
         if not self._available_channels:
             logger.warning("未配置有效的通知渠道，将不发送推送通知")
         else:
-            channel_names = [ChannelDetector.get_channel_name(ch) for ch in self._available_channels]
+            channel_names = [get_channel_name(ch) for ch in self._available_channels]
             logger.info(f"已配置 {len(channel_names)} 个通知渠道：{', '.join(channel_names)}")
 
     def _init_channels(self) -> None:
@@ -124,7 +124,7 @@ class NotificationService:
 
     def get_channel_names(self) -> str:
         """获取所有已配置渠道的名称"""
-        names = [ChannelDetector.get_channel_name(ch) for ch in self._available_channels]
+        names = [get_channel_name(ch) for ch in self._available_channels]
         return ", ".join(names)
 
     def generate_dashboard_report(self, results: list[AnalysisResult], report_date: str | None = None) -> str:
@@ -175,7 +175,7 @@ class NotificationService:
         self, channel: Any, channel_type: NotificationChannel, content: str, **kwargs: Any
     ) -> bool:
         """安全发送到单个渠道"""
-        channel_name = ChannelDetector.get_channel_name(channel_type)
+        channel_name = get_channel_name(channel_type)
         try:
             result = await channel.send(content, **kwargs)
             return result

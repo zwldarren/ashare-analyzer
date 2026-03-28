@@ -21,6 +21,65 @@ logger = logging.getLogger(__name__)
 
 STANDARD_COLUMNS = ["date", "open", "high", "low", "close", "volume", "amount", "pct_chg"]
 
+CHINESE_COLUMN_MAPPING = {
+    "日期": "date",
+    "开盘": "open",
+    "收盘": "close",
+    "最高": "high",
+    "最低": "low",
+    "成交量": "volume",
+    "成交额": "amount",
+    "涨跌幅": "pct_chg",
+}
+
+REALTIME_QUOTE_COLUMN_MAPPING = {
+    "股票代码": "code",
+    "代码": "code",
+    "股票名称": "name",
+    "名称": "name",
+    "最新价": "price",
+    "涨跌幅": "change_pct",
+    "涨跌额": "change_amount",
+    "成交量": "volume",
+    "成交额": "amount",
+    "换手率": "turnover_rate",
+    "振幅": "amplitude",
+    "最高": "high",
+    "最低": "low",
+    "今开": "open_price",
+    "开盘": "open_price",
+    "量比": "volume_ratio",
+    "市盈率-动态": "pe_ratio",
+    "市盈率": "pe_ratio",
+    "动态市盈率": "pe_ratio",
+    "市净率": "pb_ratio",
+    "总市值": "total_mv",
+    "流通市值": "circ_mv",
+    "52周最高": "high_52w",
+    "52周最低": "low_52w",
+    "60日涨跌幅": "change_60d",
+}
+
+
+def get_realtime_column(df_columns: list[str], preferred: str, fallback: str) -> str | None:
+    """
+    Get the matching column name from DataFrame columns.
+
+    Args:
+        df_columns: List of DataFrame column names
+        preferred: Preferred column name (Chinese)
+        fallback: Fallback column name (English)
+
+    Returns:
+        The matching column name or None
+    """
+    if preferred in df_columns:
+        return preferred
+    if fallback in df_columns:
+        return fallback
+    return None
+
+
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -162,3 +221,39 @@ class BaseFetcher(ABC):
     async def get_stock_list(self) -> pd.DataFrame | None:
         """Get stock list. Returns: DataFrame or None."""
         return None
+
+    def _clean_ohlc_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Clean OHLC data by filling missing values.
+
+        Operations:
+        1. Fill missing high values with max(open, close)
+        2. Fill missing low values with min(open, close)
+        3. Fill missing volume/amount with 0
+
+        Args:
+            df: DataFrame with OHLCV columns
+
+        Returns:
+            Cleaned DataFrame
+        """
+        df = df.copy()
+
+        if "high" in df.columns and "low" in df.columns and "open" in df.columns and "close" in df.columns:
+            mask_high_na = df["high"].isna()
+            if mask_high_na.any():
+                df.loc[mask_high_na, "high"] = df.loc[mask_high_na, ["open", "close"]].max(axis=1)
+                logger.debug(f"[数据清洗] 填充了 {mask_high_na.sum()} 个缺失的 high 值")
+
+            mask_low_na = df["low"].isna()
+            if mask_low_na.any():
+                df.loc[mask_low_na, "low"] = df.loc[mask_low_na, ["open", "close"]].min(axis=1)
+                logger.debug(f"[数据清洗] 填充了 {mask_low_na.sum()} 个缺失的 low 值")
+
+        if "volume" in df.columns:
+            df["volume"] = df["volume"].fillna(0)
+
+        if "amount" in df.columns:
+            df["amount"] = df["amount"].fillna(0)
+
+        return df

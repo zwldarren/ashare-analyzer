@@ -13,17 +13,13 @@ Inspired by ai-hedge-fund's News Sentiment Analyst.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from ashare_analyzer.ai.clients import get_llm_client
 from ashare_analyzer.ai.tools import ANALYZE_SIGNAL_TOOL
 from ashare_analyzer.models import AgentSignal, SignalType
 from ashare_analyzer.search import SearchService
 
 from .base import BaseAgent
-
-if TYPE_CHECKING:
-    from ashare_analyzer.ai.clients import LiteLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -130,17 +126,7 @@ class NewsSentimentAgent(BaseAgent):
         """
         super().__init__("NewsSentimentAgent")
         self._search_service = search_service
-        self._logger = logging.getLogger(__name__)
-        self._llm_client: LiteLLMClient | None = None
-        self._init_llm_client()
-
-    def _init_llm_client(self) -> None:
-        """Initialize LLM client for sentiment analysis."""
-        self._llm_client = get_llm_client()
-        if self._llm_client:
-            self._logger.debug("NewsSentimentAgent LLM client initialized successfully")
-        else:
-            self._logger.warning("No LLM API key configured, NewsSentimentAgent will be unavailable")
+        self._ensure_llm_client()
 
     def _get_search_service(self) -> SearchService:
         """Get or initialize search service."""
@@ -284,6 +270,7 @@ class NewsSentimentAgent(BaseAgent):
                 tool=ANALYZE_SIGNAL_TOOL,
                 generation_config={"temperature": 0.3, "max_output_tokens": 2048},
                 system_prompt=NEWS_SENTIMENT_SYSTEM_PROMPT,
+                agent_name="NewsSentimentAgent",
             )
 
             if result and "signal" in result:

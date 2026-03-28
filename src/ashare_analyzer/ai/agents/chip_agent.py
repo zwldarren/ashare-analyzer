@@ -12,19 +12,12 @@ This agent analyzes筹码集中度, profit ratio, and cost distribution using LL
 Combines quantitative metrics with AI-driven interpretation.
 """
 
-import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from ashare_analyzer.ai.clients import get_llm_client
 from ashare_analyzer.ai.tools import ANALYZE_SIGNAL_TOOL
 from ashare_analyzer.models import AgentSignal, SignalType
 
 from .base import BaseAgent
-
-if TYPE_CHECKING:
-    from ashare_analyzer.ai.clients import LiteLLMClient
-
-logger = logging.getLogger(__name__)
 
 # System prompt for chip analysis
 CHIP_SYSTEM_PROMPT = """You are a professional chip distribution analyst for A-share market.
@@ -85,17 +78,7 @@ class ChipAgent(BaseAgent):
     def __init__(self):
         """Initialize the Chip Agent."""
         super().__init__("ChipAgent")
-        self._logger = logging.getLogger(__name__)
-        self._llm_client: LiteLLMClient | None = None
-        self._init_llm_client()
-
-    def _init_llm_client(self) -> None:
-        """Initialize LLM client for analysis using shared factory."""
-        self._llm_client = get_llm_client()
-        if self._llm_client:
-            self._logger.debug("ChipAgent LLM client initialized successfully")
-        else:
-            self._logger.warning("No LLM API key configured, ChipAgent will use rule-based fallback")
+        self._ensure_llm_client()
 
     def is_available(self) -> bool:
         """Chip agent is available if chip data exists, with fallback."""
@@ -210,6 +193,7 @@ class ChipAgent(BaseAgent):
                 tool=ANALYZE_SIGNAL_TOOL,
                 generation_config={"temperature": 0.2, "max_output_tokens": 2048},
                 system_prompt=CHIP_SYSTEM_PROMPT,
+                agent_name="ChipAgent",
             )
 
             if result and "signal" in result:

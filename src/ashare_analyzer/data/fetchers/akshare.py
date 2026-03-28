@@ -39,7 +39,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from ashare_analyzer.data.base import STANDARD_COLUMNS, USER_AGENTS, BaseFetcher
+from ashare_analyzer.data.base import CHINESE_COLUMN_MAPPING, STANDARD_COLUMNS, USER_AGENTS, BaseFetcher
 from ashare_analyzer.exceptions import DataFetchError, RateLimitError
 from ashare_analyzer.infrastructure import AsyncRateLimiter, get_aiohttp_session
 from ashare_analyzer.models import ChipDistribution, FinancialIndicators, RealtimeSource, UnifiedRealtimeQuote
@@ -366,18 +366,7 @@ class AkshareFetcher(BaseFetcher):
     def _normalize_data(self, df: pd.DataFrame, stock_code: str) -> pd.DataFrame:
         df = df.copy()
 
-        column_mapping = {
-            "日期": "date",
-            "开盘": "open",
-            "收盘": "close",
-            "最高": "high",
-            "最低": "low",
-            "成交量": "volume",
-            "成交额": "amount",
-            "涨跌幅": "pct_chg",
-        }
-
-        df = df.rename(columns=column_mapping)
+        df = df.rename(columns=CHINESE_COLUMN_MAPPING)
         df["code"] = stock_code
 
         keep_cols = ["code"] + STANDARD_COLUMNS
@@ -393,22 +382,7 @@ class AkshareFetcher(BaseFetcher):
             if len(df) < before_len:
                 logger.debug(f"[数据清洗] 移除了 {before_len - len(df)} 行包含缺失OHLC数据的记录")
 
-        if "high" in df.columns and "low" in df.columns:
-            mask_high_na = df["high"].isna()
-            if mask_high_na.any():
-                df.loc[mask_high_na, "high"] = df.loc[mask_high_na, ["open", "close"]].max(axis=1)
-                logger.debug(f"[数据清洗] 填充了 {mask_high_na.sum()} 个缺失的 high 值")
-
-            mask_low_na = df["low"].isna()
-            if mask_low_na.any():
-                df.loc[mask_low_na, "low"] = df.loc[mask_low_na, ["open", "close"]].min(axis=1)
-                logger.debug(f"[数据清洗] 填充了 {mask_low_na.sum()} 个缺失的 low 值")
-
-        if "volume" in df.columns:
-            df["volume"] = df["volume"].fillna(0)
-
-        if "amount" in df.columns:
-            df["amount"] = df["amount"].fillna(0)
+        df = self._clean_ohlc_data(df)
 
         df = df.reset_index(drop=True)
 

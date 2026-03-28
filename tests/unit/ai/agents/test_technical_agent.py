@@ -7,32 +7,33 @@ import pytest
 from ashare_analyzer.ai.agents.technical_agent import TechnicalAgent
 from ashare_analyzer.models import SignalType
 
+LLM_CLIENT_PATH = "ashare_analyzer.ai.clients.get_llm_client"
+
 
 class TestTechnicalAgent:
     """Tests for TechnicalAgent."""
 
     def test_init(self):
         """Test agent initialization."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
+        with patch(LLM_CLIENT_PATH, return_value=None):
             agent = TechnicalAgent()
             assert agent.name == "TechnicalAgent"
 
     def test_is_available_returns_true(self):
         """Test is_available always returns True."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
+        with patch(LLM_CLIENT_PATH, return_value=None):
             agent = TechnicalAgent()
             assert agent.is_available() is True
 
     @pytest.mark.asyncio
     async def test_analyze_bullish_trend_returns_buy(self, sample_analysis_context):
         """Test bullish trend analysis returns BUY signal."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
+        with patch(LLM_CLIENT_PATH, return_value=None):
             agent = TechnicalAgent()
 
-            # Create bullish context
             context = sample_analysis_context.copy()
             context["today"] = context["today"].copy()
-            context["today"]["ma5"] = 1795.0  # close > ma5 > ma10 > ma20
+            context["today"]["ma5"] = 1795.0
             context["today"]["ma10"] = 1780.0
             context["today"]["ma20"] = 1770.0
             context["today"]["close"] = 1800.0
@@ -47,10 +48,9 @@ class TestTechnicalAgent:
     @pytest.mark.asyncio
     async def test_analyze_bearish_trend_returns_sell(self, sample_analysis_context):
         """Test bearish trend analysis returns SELL signal."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
+        with patch(LLM_CLIENT_PATH, return_value=None):
             agent = TechnicalAgent()
 
-            # Create bearish context
             context = sample_analysis_context.copy()
             context["today"] = context["today"].copy()
             context["today"]["close"] = 1760.0
@@ -67,13 +67,13 @@ class TestTechnicalAgent:
     @pytest.mark.asyncio
     async def test_analyze_missing_price_data_returns_hold(self):
         """Test analysis with missing price data returns HOLD."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
+        with patch(LLM_CLIENT_PATH, return_value=None):
             agent = TechnicalAgent()
 
             result = await agent.analyze(
                 {
                     "code": "600519",
-                    "today": {"close": 0, "ma5": 0},  # Invalid data
+                    "today": {"close": 0, "ma5": 0},
                     "ma_status": "unknown",
                 }
             )
@@ -84,7 +84,6 @@ class TestTechnicalAgent:
     @pytest.mark.asyncio
     async def test_analyze_with_llm_success(self, sample_analysis_context, mock_acompletion):
         """Test LLM-based analysis returns parsed result."""
-        # Create a mock LLM client
         mock_llm_client = MagicMock()
         mock_llm_client.is_available.return_value = True
         mock_llm_client.generate_with_tool = AsyncMock(
@@ -97,7 +96,7 @@ class TestTechnicalAgent:
             }
         )
 
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=mock_llm_client):
+        with patch(LLM_CLIENT_PATH, return_value=mock_llm_client):
             agent = TechnicalAgent()
 
             result = await agent.analyze(sample_analysis_context)
@@ -109,10 +108,9 @@ class TestTechnicalAgent:
     @pytest.mark.asyncio
     async def test_analyze_exception_returns_hold(self):
         """Test exception during analysis returns HOLD."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
+        with patch(LLM_CLIENT_PATH, return_value=None):
             agent = TechnicalAgent()
 
-            # Context that will cause exception
             result = await agent.analyze({"code": "600519", "today": None})
 
             assert result.signal == SignalType.HOLD
@@ -120,54 +118,27 @@ class TestTechnicalAgent:
             assert "error" in result.metadata
 
 
-class TestTechnicalAgentHelpers:
-    """Tests for TechnicalAgent helper methods."""
+class TestIndicatorInterpretation:
+    """Tests for indicator interpretation functions."""
 
-    def test_analyze_volume_significant(self):
-        """Test volume analysis for significant volume."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
-            agent = TechnicalAgent()
-            result = agent._analyze_volume(2.5)
-            assert result == "显著放量"
+    def test_interpret_volume(self):
+        """Test volume interpretation."""
+        from ashare_analyzer.analysis.indicators import interpret_volume
 
-    def test_analyze_volume_normal(self):
-        """Test volume analysis for normal volume."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
-            agent = TechnicalAgent()
-            result = agent._analyze_volume(1.0)
-            assert result == "量能正常"
+        assert interpret_volume(2.5) == "显著放量"
+        assert interpret_volume(1.0) == "量能正常"
+        assert interpret_volume(0.3) == "明显缩量"
 
-    def test_analyze_volume_shrinking(self):
-        """Test volume analysis for shrinking volume."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
-            agent = TechnicalAgent()
-            result = agent._analyze_volume(0.3)
-            assert result == "明显缩量"
+    def test_interpret_rsi_cn(self):
+        """Test Chinese RSI interpretation."""
+        from ashare_analyzer.analysis.indicators import interpret_rsi_cn
 
-    def test_interpret_rsi_overbought(self):
-        """Test RSI interpretation for overbought."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
-            agent = TechnicalAgent()
-            result = agent._interpret_rsi(75)
-            assert result == "超买"
+        assert interpret_rsi_cn(75) == "超买"
+        assert interpret_rsi_cn(15) == "严重超卖"
 
-    def test_interpret_rsi_oversold(self):
-        """Test RSI interpretation for oversold."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
-            agent = TechnicalAgent()
-            result = agent._interpret_rsi(15)
-            assert result == "严重超卖"
+    def test_interpret_adx_cn(self):
+        """Test Chinese ADX interpretation."""
+        from ashare_analyzer.analysis.indicators import interpret_adx_cn
 
-    def test_interpret_adx_strong_trend(self):
-        """Test ADX interpretation for strong trend."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
-            agent = TechnicalAgent()
-            result = agent._interpret_adx(45)
-            assert result == "很强趋势"
-
-    def test_interpret_adx_no_trend(self):
-        """Test ADX interpretation for no trend."""
-        with patch("ashare_analyzer.ai.agents.technical_agent.get_llm_client", return_value=None):
-            agent = TechnicalAgent()
-            result = agent._interpret_adx(15)
-            assert result == "无趋势"
+        assert interpret_adx_cn(45) == "很强趋势"
+        assert interpret_adx_cn(15) == "无趋势"

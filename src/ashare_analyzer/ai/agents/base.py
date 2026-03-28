@@ -5,10 +5,14 @@ Defines the base class for all analysis agents.
 All agents must inherit from BaseAgent and implement the analyze method.
 """
 
+import logging
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ashare_analyzer.models import AgentSignal
+
+if TYPE_CHECKING:
+    from ashare_analyzer.ai.clients import LiteLLMClient
 
 __all__ = ["BaseAgent"]
 
@@ -43,6 +47,24 @@ class BaseAgent(ABC):
             name: Unique name for this agent
         """
         self.name = name
+        self._logger = logging.getLogger(self.__class__.__module__)
+        self._llm_client: LiteLLMClient | None = None
+
+    def _ensure_llm_client(self) -> None:
+        """
+        Initialize LLM client if not already initialized.
+
+        Call this in subclass __init__ after super().__init__() if the agent uses LLM.
+        """
+        if self._llm_client is not None:
+            return
+        from ashare_analyzer.ai.clients import get_llm_client
+
+        self._llm_client = get_llm_client()
+        if self._llm_client:
+            self._logger.debug(f"{self.name} LLM client initialized successfully")
+        else:
+            self._logger.warning(f"No LLM API key configured, {self.name} will use fallback")
 
     @abstractmethod
     async def analyze(self, context: dict[str, Any]) -> AgentSignal:

@@ -1,5 +1,7 @@
 """输出系统使用的共享文本常量"""
 
+from ashare_analyzer.constants import SIGNAL_DISPLAY_NAMES
+
 # 标题文本
 TEXT_TITLE = "AI投资决策报告"
 TEXT_DASHBOARD = "今日决策概览"
@@ -20,9 +22,9 @@ COL_REASON = "理由"
 
 # 通用文本
 TEXT_TOTAL_STOCKS = "共分析"
-TEXT_BUY = "买入"
-TEXT_HOLD = "持有"
-TEXT_SELL = "卖出"
+TEXT_BUY = SIGNAL_DISPLAY_NAMES["buy"]
+TEXT_HOLD = SIGNAL_DISPLAY_NAMES["hold"]
+TEXT_SELL = SIGNAL_DISPLAY_NAMES["sell"]
 TEXT_SUGGESTED_POSITION = "建议仓位"
 TEXT_DECISION_REASON = "决策理由"
 TEXT_CONSENSUS_LEVEL = "共识度"

@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from cachetools import TTLCache as BaseTTLCache
+from cachetools import TTLCache as SimpleTTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -171,3 +172,23 @@ class TTLCache:
             return wrapper
 
         return decorator
+
+
+_realtime_cache: SimpleTTLCache[str, Any] = SimpleTTLCache(maxsize=1, ttl=1200)
+_etf_realtime_cache: SimpleTTLCache[str, Any] = SimpleTTLCache(maxsize=1, ttl=1200)
+
+
+def get_realtime_cache() -> SimpleTTLCache[str, Any]:
+    """Get the shared realtime quote cache for stock data."""
+    return _realtime_cache
+
+
+def get_etf_realtime_cache() -> SimpleTTLCache[str, Any]:
+    """Get the shared realtime quote cache for ETF data."""
+    return _etf_realtime_cache
+
+
+def clear_realtime_caches() -> None:
+    """Clear all realtime quote caches."""
+    _realtime_cache.clear()
+    _etf_realtime_cache.clear()
