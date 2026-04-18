@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ def handle_errors(
                     _log_error(e)
                     return default_return
 
-            return async_wrapper  # type: ignore[return-value]
+            return cast(F, async_wrapper)
         else:
             # Sync wrapper for sync functions
             @wraps(func)
@@ -150,7 +150,7 @@ def handle_errors(
                     _log_error(e)
                     return default_return
 
-            return wrapper  # type: ignore[return-value]
+            return cast(F, wrapper)
 
     return decorator
 

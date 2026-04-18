@@ -58,7 +58,7 @@ class PortfolioService:
         if not db_positions:
             return []
 
-        positions = [Position(code=p.code, quantity=p.quantity, cost_price=p.cost_price) for p in db_positions]  # type: ignore[arg-type]
+        positions = [Position(code=p.code, quantity=p.quantity, cost_price=p.cost_price) for p in db_positions]  # ty:ignore[invalid-argument-type]
 
         codes = [p.code for p in positions]
         await self._data_manager.prefetch_realtime_quotes(codes)

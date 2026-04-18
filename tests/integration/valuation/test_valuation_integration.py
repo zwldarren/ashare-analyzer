@@ -1,8 +1,20 @@
 """Integration tests for valuation system."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from ashare_analyzer.ai.agents.valuation_agent import ValuationAgent
+
+
+@pytest.fixture(autouse=True)
+def mock_llm_calls():
+    """Mock LLM calls to prevent real API requests during tests."""
+    with patch(
+        "ashare_analyzer.ai.agents.valuation_agent.ValuationAgent._analyze_with_llm", new_callable=AsyncMock
+    ) as mock:
+        mock.return_value = None  # Force fallback to heuristic analysis
+        yield
 
 
 class TestValuationIntegration:

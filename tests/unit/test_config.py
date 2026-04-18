@@ -115,7 +115,7 @@ class TestGetNestedValue:
 
     def test_none_data_returns_none(self):
         """Test None data returns None."""
-        assert _get_nested_value(None, ("key",)) is None  # type: ignore[arg-type]
+        assert _get_nested_value(None, ("key",)) is None
 
 
 class TestFlattenTomlToEnv:

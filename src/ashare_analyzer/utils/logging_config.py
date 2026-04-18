@@ -147,6 +147,7 @@ def setup_logging(
 
         # 初始化 LLM 调试日志（仅在 debug 模式下启用）
         from ashare_analyzer.utils.llm_logger import setup_llm_logger
+
         setup_llm_logger(log_dir)
 
     # 降低第三方库日志级别

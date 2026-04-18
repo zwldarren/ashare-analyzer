@@ -6,6 +6,8 @@ Each builder is responsible for a specific domain of context data.
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
+from datetime import time as dt_time
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -489,13 +491,27 @@ async def build_financial_context(
                     "gross_margin": "gross_margin",
                     "revenue_growth": "revenue_growth",
                     "earnings_growth": "earnings_growth",
-                    "debt_ratio": "debt_to_equity",
                     "current_ratio": "current_ratio",
                     "dividend_yield": "dividend_yield",
                 }
                 for src_key, dst_key in indicator_mapping.items():
                     if indicators.get(src_key) is not None:
                         financial_data[dst_key] = indicators[src_key]
+
+                # 资产负债率(debt_ratio)是百分比，需单独处理：
+                # 1. 保留原始值作为 asset_liability_ratio（百分比）
+                # 2. 转换为真正的 debt_to_equity = 总负债/净资产 = debt_ratio/(100-debt_ratio)
+                if indicators.get("debt_ratio") is not None:
+                    debt_ratio_pct = float(indicators["debt_ratio"])
+                    financial_data["asset_liability_ratio"] = debt_ratio_pct
+                    if debt_ratio_pct <= 0:
+                        # 无负债 → 产权比率 = 0
+                        financial_data["debt_to_equity"] = 0.0
+                    elif debt_ratio_pct >= 100:
+                        # 负债≥资产 → 产权比率无意义(净资产为负或零)
+                        financial_data["debt_to_equity"] = None
+                    else:
+                        financial_data["debt_to_equity"] = round(debt_ratio_pct / (100 - debt_ratio_pct), 2)
 
                 logger.debug(
                     f"[{stock_code}] 财务指标: ROE={indicators.get('roe')}%, "
@@ -588,12 +604,41 @@ def build_price_data(daily_data: pd.DataFrame | None) -> dict[str, Any] | None:
     return {"close": closes, "volume": volumes}
 
 
+def _is_ashare_trading_hours() -> bool:
+    """Check if current time is within A-share trading hours (Beijing time)."""
+    now_beijing = datetime.now(timezone(timedelta(hours=8)))
+    weekday = now_beijing.weekday()
+    if weekday >= 5:
+        return False
+    t = now_beijing.time()
+    morning = t >= dt_time(9, 30) and t <= dt_time(11, 30)
+    afternoon = t >= dt_time(13, 0) and t <= dt_time(15, 0)
+    return morning or afternoon
+
+
 def get_current_price(realtime_quote: "UnifiedRealtimeQuote | None", daily_data: pd.DataFrame | None) -> float:
-    """Get current price from realtime quote or daily data."""
-    if realtime_quote and realtime_quote.price is not None:
-        return float(realtime_quote.price)
-    if daily_data is not None and not daily_data.empty and "close" in daily_data.columns:
-        return float(daily_data["close"].iloc[-1])
+    """Get current price with smart source selection.
+
+    During A-share trading hours (9:30-11:30, 13:00-15:00 Beijing time),
+    realtime quotes are preferred as they reflect live market prices.
+    Outside trading hours, daily close is preferred as the confirmed
+    settlement price — realtime quotes may contain stale intraday data.
+    """
+    during_trading = _is_ashare_trading_hours()
+    if during_trading:
+        if realtime_quote and realtime_quote.price is not None and realtime_quote.price > 0:
+            return float(realtime_quote.price)
+        if daily_data is not None and not daily_data.empty and "close" in daily_data.columns:
+            daily_close = float(daily_data["close"].iloc[-1])
+            if daily_close > 0:
+                return daily_close
+    else:
+        if daily_data is not None and not daily_data.empty and "close" in daily_data.columns:
+            daily_close = float(daily_data["close"].iloc[-1])
+            if daily_close > 0:
+                return daily_close
+        if realtime_quote and realtime_quote.price is not None:
+            return float(realtime_quote.price)
     return 0.0
 
 
@@ -601,6 +646,7 @@ async def build_portfolio_context(
     portfolio_service: Any,
     stock_code: str,
     current_price: float = 0.0,
+    available_cash: float = 0.0,
 ) -> dict[str, Any]:
     """Build portfolio context for analysis.
 
@@ -608,6 +654,7 @@ async def build_portfolio_context(
         portfolio_service: PortfolioService instance
         stock_code: Current stock being analyzed
         current_price: Current stock price (for position value calculation)
+        available_cash: Available cash balance in portfolio
 
     Returns:
         Dict with portfolio information for decision context
@@ -615,7 +662,7 @@ async def build_portfolio_context(
     try:
         positions = await portfolio_service.get_positions()
 
-        total_value = sum(p.market_value or 0 for p in positions)
+        total_value = sum(p.market_value or 0 for p in positions) + available_cash
 
         current_position = next(
             (p for p in positions if p.code == stock_code),
@@ -634,6 +681,7 @@ async def build_portfolio_context(
         return {
             "positions": [p.to_dict() for p in positions],
             "total_value": total_value,
+            "available_cash": available_cash,
             "has_position": current_position is not None,
             "position_quantity": current_position.quantity if current_position else 0,
             "position_cost_price": current_position.cost_price if current_position else 0.0,
@@ -647,7 +695,8 @@ async def build_portfolio_context(
         logger.warning(f"Failed to build portfolio context: {e}")
         return {
             "positions": [],
-            "total_value": 0,
+            "total_value": available_cash,
+            "available_cash": available_cash,
             "has_position": False,
             "current_position_ratio": 0,
             "current_profit_loss_pct": None,

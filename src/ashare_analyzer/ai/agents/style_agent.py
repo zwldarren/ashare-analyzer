@@ -30,64 +30,64 @@ from .base import BaseAgent
 from .utils import FinancialScorer, score_to_signal
 
 # System prompt for style analysis
-STYLE_SYSTEM_PROMPT = """You are a professional investment style analyst.
+STYLE_SYSTEM_PROMPT = """你是一位专业的投资风格分析师。
 
-Your task: Analyze a stock's investment style characteristics and generate trading signals.
+你的任务：分析股票的投资风格特征并生成交易信号。
 
-=== Style Dimensions ===
-You will receive data in three dimensions:
+=== 风格维度 ===
+你将收到三个维度的数据：
 
-1. Value Attributes:
-   - PE ratio, PB ratio (lower is better for value)
-   - Margin of safety from valuation
-   - Dividend yield (higher is better)
-   - Financial stability metrics
+1. 价值属性：
+   - PE ratio、PB ratio（越低越有价值属性）
+   - margin of safety（估值安全边际）
+   - 股息率（越高越好）
+   - 财务稳定性指标
 
-2. Growth Attributes:
-   - Revenue growth rate
-   - EPS growth rate
-   - Market opportunity size
-   - Innovation indicators
+2. 成长属性：
+   - 营收增长率
+   - EPS 增长率
+   - 市场机会规模
+   - 创新指标
 
-3. Momentum Attributes:
-   - Price trend (MA alignment)
-   - Volume confirmation
-   - Relative strength vs market
-   - Technical signals
+3. 动量属性：
+   - 价格趋势（均线排列）
+   - 成交量确认
+   - 相对市场强弱
+   - 技术信号
 
-=== Analysis Approach ===
-- Stocks can exhibit multiple styles simultaneously
-- Weight styles based on current data, not fixed ratios
-- Consider which style dominates for this stock
-- Assess quality of each style signal
-- Market conditions may favor certain styles
+=== 分析方法 ===
+- 股票可以同时展现多种风格特征
+- 根据当前数据动态调整风格权重，而非固定比例
+- 考虑该股票哪种风格占主导
+- 评估每种风格信号的质量
+- 市场环境可能偏好特定风格
 
-=== Signal Guidelines ===
-BUY conditions:
-- Strong value with margin of safety >20%
-- Strong growth with sustainable metrics
-- Strong momentum with volume confirmation
-- One style strongly dominant with clear signal
+=== 信号指引 ===
+BUY 条件：
+- 价值属性强劲，margin of safety >20%
+- 成长属性强劲，增长指标可持续
+- 动量属性强劲，有成交量确认
+- 一种风格明显主导且有清晰信号
 
-SELL conditions:
-- Overvalued with negative margin
-- Growth deteriorating
-- Momentum breaking down
-- Conflicting style signals
+SELL 条件：
+- 估值过高，margin of safety 为负
+- 成长性恶化
+- 动量趋势破位
+- 风格信号相互矛盾
 
-HOLD conditions:
-- Mixed style signals
-- Moderate metrics across dimensions
-- Unclear dominant style
+HOLD 条件：
+- 风格信号混合
+- 各维度指标适中
+- 主导风格不明确
 
-=== Confidence Levels ===
-- 90-100%: One style strongly dominates with clear metrics
-- 70-89%: Clear style inclination with supporting data
-- 50-69%: Moderate style signals, some uncertainty
-- 30-49%: Conflicting style signals
-- 10-29%: No clear style pattern
+=== 置信度等级 ===
+- 90-100%: 一种风格强烈主导，指标明确
+- 70-89%: 风格倾向明确，有数据支撑
+- 50-69%: 风格信号中等，存在一定不确定性
+- 30-49%: 风格信号矛盾
+- 10-29%: 无明确风格模式
 
-Use the analyze_signal function to return your analysis."""
+请使用 analyze_signal 函数返回你的分析结果。"""
 
 
 class StyleAgent(BaseAgent):
@@ -177,6 +177,8 @@ class StyleAgent(BaseAgent):
             sections.append(f"- Dividend Yield: {valuation_data['dividend_yield']:.2f}%")
         if financial_data.get("debt_to_equity") is not None:
             sections.append(f"- Debt-to-Equity: {financial_data['debt_to_equity']:.2f}")
+        if financial_data.get("asset_liability_ratio") is not None:
+            sections.append(f"- Asset-Liability Ratio: {financial_data['asset_liability_ratio']:.1f}%")
         if not any(
             [
                 valuation_data.get("pe_ratio"),
@@ -839,4 +841,3 @@ class StyleAgent(BaseAgent):
         except Exception:
             self._logger.debug(f"Error calculating change in {days} days")
             return 0
-

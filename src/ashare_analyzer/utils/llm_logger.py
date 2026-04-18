@@ -118,10 +118,7 @@ def log_llm_request(
 
     # 记录生成配置（隐藏敏感信息）
     if generation_config:
-        safe_config = {
-            k: v for k, v in generation_config.items()
-            if k not in ("api_key", "api_base")
-        }
+        safe_config = {k: v for k, v in generation_config.items() if k not in ("api_key", "api_base")}
         _llm_logger.debug("-" * 40)
         _llm_logger.debug(f"Generation Config:\n{_format_json(safe_config)}")
 
@@ -226,10 +223,7 @@ def log_llm_error(
     # 记录请求信息
     if request_info:
         # 隐藏敏感信息
-        safe_info = {
-            k: v for k, v in request_info.items()
-            if k not in ("api_key", "api_base")
-        }
+        safe_info = {k: v for k, v in request_info.items() if k not in ("api_key", "api_base")}
         _llm_logger.debug(f"Request Info:\n{_format_json(safe_info)}")
 
     _llm_logger.debug("=" * 80)

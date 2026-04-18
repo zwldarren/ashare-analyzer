@@ -371,8 +371,8 @@ class SearchService:
             # Use English keywords for HK/US stocks
             query = f"{stock_name} {stock_code} stock latest news"
         else:
-            # Use Chinese keywords for other stocks
-            query = f"{stock_name} {stock_code} 股票 最新消息"
+            # Use Chinese keywords for other stocks — exclude data pages
+            query = f"{stock_name} {stock_code} 最新消息 -数据中心 -行情 -数据页面 -月报表"
 
         logger.debug(f"搜索股票新闻: {stock_name}({stock_code}), query='{query}', 时间范围: 近{search_days}天")
 

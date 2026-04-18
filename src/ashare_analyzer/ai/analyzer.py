@@ -19,6 +19,7 @@ from typing import Any
 
 from ashare_analyzer.ai.interface import IAIAnalyzer
 from ashare_analyzer.analysis.context import build_portfolio_context
+from ashare_analyzer.config import get_config
 from ashare_analyzer.constants import normalize_signal
 from ashare_analyzer.data.stock_name_resolver import StockNameResolver
 from ashare_analyzer.dependencies import get_portfolio_service
@@ -160,16 +161,22 @@ class AIAnalyzer(IAIAnalyzer):
             )
 
             # Step 4: Build portfolio context with current price
-            current_price = 0.0
-            if "today" in context and context["today"]:
-                current_price = float(context["today"].get("close", 0))
-            elif "realtime" in context and context["realtime"]:
-                current_price = float(context["realtime"].get("price", 0))
+            # Use the unified price from context (set by analysis/analyzer.py via get_current_price)
+            # which already prioritizes daily close over potentially stale realtime quotes
+            current_price = float(context.get("current_price", 0))
+            if current_price <= 0:
+                if "today" in context and context["today"]:
+                    current_price = float(context["today"].get("close", 0))
+                elif "realtime" in context and context["realtime"]:
+                    current_price = float(context["realtime"].get("price", 0))
+
+            available_cash = get_config().portfolio.available_cash if get_config().portfolio else 0.0
 
             portfolio_context = await build_portfolio_context(
                 self._portfolio_service,
                 code,
                 current_price=current_price,
+                available_cash=available_cash,
             )
 
             # Step 5: DecisionMaker makes final LLM-driven decision
@@ -316,6 +323,17 @@ class AIAnalyzer(IAIAnalyzer):
 
         # Build risk warning from identified risks
         risk_warning = "风险提示: " + "; ".join(risks_identified[:3]) if risks_identified else "未识别到重大风险"
+
+        # Detect consensus deviation: when decision direction differs from agent consensus
+        consensus_direction = self._get_consensus_direction(agent_signals)
+        if consensus_direction and decision.lower() != consensus_direction:
+            consensus_label = {"buy": "看多", "sell": "看空", "hold": "持有/观望"}.get(
+                consensus_direction, consensus_direction
+            )
+            risk_warning = (
+                f"⚠️ 决策偏离共识(共识方向: {consensus_label} {consensus_level:.0%}, 决策方向: {decision}) | "
+                + risk_warning
+            )
 
         # Extract portfolio information from context
         portfolio_info = context.get("portfolio", {})
@@ -469,6 +487,32 @@ class AIAnalyzer(IAIAnalyzer):
         elif score >= 60:
             return "中"
         return "低"
+
+    @staticmethod
+    def _get_consensus_direction(agent_signals: dict[str, Any]) -> str | None:
+        """Get the consensus direction (buy/sell/hold) from agent signals.
+
+        Returns None when there is no clear consensus (tie for top direction)
+        or when fewer than 2 agents participated (consensus is meaningless
+        with a single agent — any override would always trigger a deviation warning).
+        """
+        if len(agent_signals) < 2:
+            return None
+        counts: dict[str, int] = {"buy": 0, "sell": 0, "hold": 0}
+        for signal_data in agent_signals.values():
+            sig = signal_data.get("signal", "hold").lower()
+            if sig in counts:
+                counts[sig] += 1
+        total = sum(counts.values())
+        if total == 0:
+            return None
+        max_count = max(counts.values())
+        top_directions = [d for d, c in counts.items() if c == max_count]
+        if len(top_directions) > 1:
+            return None
+        if max_count <= total / 2:
+            return None
+        return top_directions[0]
 
     def _build_market_snapshot(self, context: dict[str, Any]) -> dict[str, Any]:
         """Build market snapshot from analysis context."""

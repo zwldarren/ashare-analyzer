@@ -28,12 +28,7 @@ class SignalType(Enum):
 
     def to_string(self) -> str:
         """Convert to string."""
-        mapping = {
-            self.BUY: "buy",
-            self.SELL: "sell",
-            self.HOLD: "hold",
-        }
-        return mapping[self]
+        return self.name.lower()
 
     def is_bullish(self) -> bool:
         """Check if signal is bullish."""

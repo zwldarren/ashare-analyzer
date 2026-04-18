@@ -62,7 +62,11 @@ class MarkdownRenderer(ReportRenderer):
 
         for stock in report.stocks:
             emoji = get_signal_emoji(stock.action)
-            position_str = f" | 仓位{stock.position_ratio * 100:.0f}%" if stock.position_ratio > 0 else ""
+            position_str = (
+                f" | 仓位{stock.position_ratio * 100:.0f}%"
+                if stock.position_ratio > 0
+                else (f" | 持有{stock.position_quantity}股" if stock.has_position else "")
+            )
             line = f"{emoji} **{stock.name}({stock.code})**: **{stock.action}** | "
             line += f"置信度{stock.confidence}%{position_str}"
             lines.append(line)
@@ -127,6 +131,9 @@ class MarkdownRenderer(ReportRenderer):
         # 建议仓位
         if stock.position_ratio > 0:
             lines.append(f"{REPORT_EMOJI['money']} **{TEXT_SUGGESTED_POSITION}**: {stock.position_ratio * 100:.0f}%")
+            lines.append("")
+        elif stock.has_position:
+            lines.append(f"{REPORT_EMOJI['money']} **{TEXT_SUGGESTED_POSITION}**: 持有{stock.position_quantity}股")
             lines.append("")
 
         # 决策理由

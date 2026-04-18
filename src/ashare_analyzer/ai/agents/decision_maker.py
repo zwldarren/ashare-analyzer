@@ -25,57 +25,57 @@ from .base import BaseAgent
 logger = logging.getLogger(__name__)
 
 # System prompt for LLM-driven decision making - NO hardcoded rules
-DECISION_MAKER_SYSTEM_PROMPT = """You are the final decision maker for A-share trading.
+DECISION_MAKER_SYSTEM_PROMPT = """你是A股交易的最终决策者。
 
-Your role:
-- You have FULL AUTONOMY to make trading decisions
-- You receive analysis reports from multiple analysts as INFORMATION
-- You are NOT bound by any voting or consensus mechanism
-- You decide which signals to trust and how much weight to give them
+你的角色：
+- 你拥有完全的交易决策自主权
+- 你收到来自多位分析师的分析报告作为信息参考
+- 你不受任何投票或共识机制的约束
+- 你决定信任哪些信号以及给予多少权重
 
-=== Your Decision Framework ===
+=== 你的决策框架 ===
 
-You will receive:
-1. Stock context (code, name, current price, market data)
-2. Analysis reports from specialized analysts
-3. Current portfolio state (positions, available capital)
-4. Risk limits (maximum position size as a hard guard)
+你将收到：
+1. 股票上下文（代码、名称、当前价格、市场数据）
+2. 专业分析师的分析报告
+3. 当前持仓状态（持仓、可用资金）
+4. 风险限制（最大仓位作为硬性约束）
 
-Your output MUST include:
-- decision: "buy", "sell", or "hold"
-- confidence: 0-100 (your conviction level)
-- position_ratio: 0.0-1.0 (target portfolio allocation, NOT exceeding risk limits)
-- reasoning: Explain YOUR thought process, not just summarize analysts
-- key_considerations: What factors most influenced your decision
-- risks_identified: What concerns or risks you see
+你的输出必须包含：
+- decision: "buy"、"sell" 或 "hold"
+- confidence: 0-100（你的确信程度）
+- position_ratio: 0.0-1.0（目标仓位配比，不得超过风险限制）
+- reasoning: 解释你的思考过程，而非简单汇总分析师观点
+- key_considerations: 最影响你决策的因素
+- risks_identified: 你发现的风险或隐忧
 
-=== Important Principles ===
+=== 重要原则 ===
 
-1. ANALYSTS PROVIDE CONTEXT, NOT VOTES
-   - A "HOLD" from one analyst doesn't cancel a "BUY" from another
-   - You decide which analyst's view is most relevant for current market conditions
-   - Consider each analyst's specialty and track record
+1. 分析师提供的是上下文，而非投票
+   - 一个分析师的"HOLD"不会抵消另一个的"BUY"
+   - 你决定在当前市场条件下哪个分析师的观点最相关
+   - 考虑每位分析师的专业领域和过往表现
 
-2. MARKET CONTEXT MATTERS
-   - In a strong bull market, higher valuations may be acceptable
-   - In a bear market, even "cheap" stocks may decline further
-   - Technical patterns that worked historically may not work now
+2. 市场环境至关重要
+   - 在强势牛市中，较高估值可能是可接受的
+   - 在熊市中，即使是"便宜"的股票也可能继续下跌
+   - 历史上有效的技术模式现在未必仍然有效
 
-3. POSITION SIZING IS YOUR CALL
-   - The risk limit is a MAXIMUM, not a recommendation
-   - You can choose a smaller position if you see higher risk
-   - Consider existing positions and correlation
+3. 仓位大小由你决定
+   - 风险限制是上限，而非建议
+   - 如果你认为风险较高，可以选择更小的仓位
+   - 考虑现有持仓和相关性
 
-4. NO ABSOLUTE RULES
-   - There's no "must buy" or "must sell" threshold
-   - Every decision is a probability assessment
-   - Explain your reasoning clearly
+4. 没有绝对规则
+   - 不存在"必须买入"或"必须卖出"的阈值
+   - 每一个决策都是概率评估
+   - 清晰地解释你的推理
 
-=== Output Format ===
-Use the make_trading_decision function to return your decision.
+=== 输出格式 ===
+请使用 make_trading_decision 函数返回你的决策。
 
-Remember: You are the DECISION MAKER, not a vote aggregator.
-Trust your judgment based on the comprehensive information provided."""
+记住：你是决策者，而非投票汇总者。
+基于所提供的综合信息，相信你自己的判断。"""
 
 
 class DecisionMakerAgent(BaseAgent):
@@ -158,6 +158,63 @@ class DecisionMakerAgent(BaseAgent):
             # Apply hard risk limit
             decision["position_ratio"] = min(decision.get("position_ratio", 0), max_position)
 
+            # Position risk enforcement: when existing position exceeds max_position,
+            # force a reduction independently of the LLM's trading signal
+            current_position_ratio = portfolio.get("current_position_ratio", 0)
+            if current_position_ratio > max_position and portfolio.get("has_position", False):
+                # If LLM didn't already decide to sell/reduce, override to reduce position
+                if decision["decision"] in ("hold", "buy"):
+                    original_decision = decision["decision"]
+                    llm_failed = decision.get("llm_failed", False)
+                    self._logger.info(
+                        f"[{stock_code}] Position risk override: "
+                        f"{current_position_ratio:.0%} > {max_position:.0%} limit, "
+                        f"forcing reduction (original: {original_decision})"
+                    )
+                    decision["decision"] = "sell"
+                    position_quantity = portfolio.get("position_quantity", 0)
+                    excess_ratio = current_position_ratio - max_position
+                    shares_to_sell = max(1, int(position_quantity * (excess_ratio / current_position_ratio)))
+                    decision["trade_quantity"] = min(shares_to_sell, position_quantity)
+                    decision["position_action"] = "reduce_position"
+                    decision["position_ratio"] = max_position
+
+                    if llm_failed:
+                        decision["confidence"] = 70
+                        decision["reasoning"] = (
+                            f"风控强制减仓: 当前持仓占比{current_position_ratio:.0%}"
+                            f"超过{max_position:.0%}限制(LLM决策不可用，基于风控规则)。"
+                        )
+                    else:
+                        decision["reasoning"] = (
+                            f"仓位风险强制减仓: 当前持仓占比{current_position_ratio:.0%}"
+                            f"超过{max_position:.0%}限制。原决策:{original_decision}。"
+                            f"{decision.get('reasoning', '')}"
+                        )
+
+                    if "key_considerations" not in decision:
+                        decision["key_considerations"] = []
+                    decision["key_considerations"].insert(
+                        0, f"持仓占比{current_position_ratio:.0%}超过{max_position:.0%}风险限制(强制)"
+                    )
+                    if llm_failed:
+                        decision["key_considerations"].insert(1, "LLM决策不可用，基于风控规则减仓")
+                    decision.pop("llm_failed", None)
+                # Even if LLM already said sell, annotate that position risk was a factor
+                elif decision["decision"] == "sell":
+                    llm_failed = decision.get("llm_failed", False)
+                    if llm_failed:
+                        decision["confidence"] = 70
+                    if "key_considerations" not in decision:
+                        decision["key_considerations"] = []
+                    if not any("风险限制" in c for c in decision.get("key_considerations", [])):
+                        decision["key_considerations"].append(
+                            f"持仓占比{current_position_ratio:.0%}超过{max_position:.0%}风险限制"
+                        )
+                    if llm_failed:
+                        decision["key_considerations"].append("LLM决策不可用，基于风控规则减仓")
+                    decision.pop("llm_failed", None)
+
             self._logger.debug(
                 f"[{stock_code}] Decision: {decision['decision']} "
                 f"(confidence {decision['confidence']}%, position {decision['position_ratio'] * 100:.0f}%)"
@@ -220,7 +277,7 @@ class DecisionMakerAgent(BaseAgent):
             result = await self._llm_client.generate_with_tool(
                 prompt=prompt,
                 tool=DECISION_TOOL,
-                generation_config={"temperature": 0.3, "max_output_tokens": 1024},
+                generation_config={"temperature": 0.3, "max_output_tokens": 16384},
                 system_prompt=DECISION_MAKER_SYSTEM_PROMPT,
                 agent_name="DecisionMakerAgent",
             )
@@ -292,7 +349,7 @@ class DecisionMakerAgent(BaseAgent):
             analyst = report.get("analyst", "Unknown")
             conclusion = report.get("conclusion", "hold").upper()
             confidence = report.get("confidence", 0)
-            reasoning = report.get("reasoning", "No reasoning provided")
+            reasoning = report.get("reasoning", "No reasoning provided").replace("\n", "; ")
             key_metrics = report.get("key_metrics", {})
 
             lines.append(f"\n--- {analyst} ---")
@@ -311,7 +368,9 @@ class DecisionMakerAgent(BaseAgent):
             return "无持仓信息"
 
         has_position = portfolio.get("has_position", False)
-        if not has_position:
+        available_cash = portfolio.get("available_cash", 0)
+
+        if not has_position and available_cash <= 0:
             return "当前无持仓"
 
         quantity = portfolio.get("position_quantity", 0)
@@ -322,13 +381,22 @@ class DecisionMakerAgent(BaseAgent):
         position_ratio = portfolio.get("current_position_ratio", 0)
 
         profit_str = f"{profit_pct:.2f}%" if profit_pct is not None else "N/A"
-        return f"""持有股数: {quantity} 股
-成本价: ¥{cost_price:.2f}
-当前价: ¥{current_price:.2f}
-浮盈亏: {profit_str}
-持仓市值: ¥{(current_price * quantity):.0f}
-占总资产: {position_ratio * 100:.1f}%
-总资产: ¥{total_value:.0f}"""
+        lines = []
+        if has_position:
+            lines.extend(
+                [
+                    f"持有股数: {quantity} 股",
+                    f"成本价: ¥{cost_price:.2f}",
+                    f"当前价: ¥{current_price:.2f}",
+                    f"浮盈亏: {profit_str}",
+                    f"持仓市值: ¥{(current_price * quantity):.0f}",
+                    f"占总资产: {position_ratio * 100:.1f}%",
+                ]
+            )
+        if available_cash > 0:
+            lines.append(f"可用现金: ¥{available_cash:.0f}")
+        lines.append(f"总资产: ¥{total_value:.0f}")
+        return "\n".join(lines)
 
     def _format_market_data(self, market_data: dict[str, Any]) -> str:
         """Format market data as readable text."""
@@ -366,4 +434,5 @@ class DecisionMakerAgent(BaseAgent):
             "reasoning": reason,
             "key_considerations": [],
             "risks_identified": [reason],
+            "llm_failed": True,
         }

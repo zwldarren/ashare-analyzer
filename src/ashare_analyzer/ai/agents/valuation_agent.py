@@ -37,54 +37,54 @@ from .base import BaseAgent
 logger = logging.getLogger(__name__)
 
 # System prompt for valuation analysis
-VALUATION_SYSTEM_PROMPT = """You are a professional valuation analyst for A-share market.
+VALUATION_SYSTEM_PROMPT = """你是一名专业的A股市场估值分析师。
 
-Your task: Assess whether a stock is fairly valued based on multiple valuation methods.
+你的任务：基于多种估值方法，评估股票是否被合理定价。
 
-=== Key Metrics You'll Receive ===
-- Fair value: Calculated fair value from multiple methods
-- Current price: Market price
-- Margin of safety: (Fair value - Current price) / Current price
-- Stock type: Value, Growth, Cyclical, Financial, or Loss-making
-- Valuation methods used: Which methods contributed to fair value
+=== 你将收到的关键指标 ===
+- 公允价值：由多种方法计算得出的公允价值
+- 当前价格：市场价格
+- 安全边际：（公允价值 - 当前价格）/ 当前价格
+- 股票类型：价值型、成长型、周期型、金融型或亏损型
+- 所用估值方法：哪些方法对公允价值有贡献
 
-=== Interpretation Guidelines ===
-Margin of Safety:
-- Positive margin means stock is undervalued (fair value > current price)
-- Negative margin means stock is overvalued (fair value < current price)
-- Consider stock type when interpreting margin
+=== 解读指引 ===
+安全边际：
+- 正值表示股票被低估（公允价值 > 当前价格）
+- 负值表示股票被高估（公允价值 < 当前价格）
+- 解读安全边际时需考虑股票类型
 
-Stock Type Considerations:
-- Value stocks: Focus on margin of safety, look for >20% discount
-- Growth stocks: Higher P/E acceptable if growth justifies it
-- Cyclical stocks: Consider cycle position, be cautious at peak
-- Financial stocks: P/B more relevant than P/E
-- Loss-making: Valuation methods less reliable, higher uncertainty
+股票类型考量：
+- 价值型：关注安全边际，寻找 >20% 的折价
+- 成长型：如果增长能支撑，较高的PE可接受
+- 周期型：考虑周期位置，峰值时需谨慎
+- 金融型：PB比PE更相关
+- 亏损型：估值方法可靠性较低，不确定性更高
 
-=== Signal Guidelines ===
-BUY conditions:
-- Strong margin of safety (>20% undervalued)
-- Multiple valuation methods agree
-- Stock type appropriate for valuation method
+=== 信号指引 ===
+BUY条件：
+- 安全边际充足（低估 >20%）
+- 多种估值方法结论一致
+- 股票类型与估值方法匹配
 
-SELL conditions:
-- Significant overvaluation (>20% overvalued)
-- Valuation methods deteriorating
-- Stock type mismatch with valuation
+SELL条件：
+- 显著高估（高估 >20%）
+- 估值指标恶化
+- 股票类型与估值方法不匹配
 
-HOLD conditions:
-- Fair value close to current price (±10%)
-- Mixed signals from methods
-- Uncertain stock type
+HOLD条件：
+- 公允价值接近当前价格（±10%）
+- 各方法信号混合
+- 股票类型不确定
 
-=== Confidence Levels ===
-- 90-100%: Clear valuation signal with multiple methods confirming
-- 70-89%: Good valuation signal with minor data gaps
-- 50-69%: Moderate certainty, some method limitations
-- 30-49%: Limited data or conflicting signals
-- 10-29%: Poor data quality or unreliable valuation
+=== 置信度等级 ===
+- 90-100%：估值信号明确，多种方法相互验证
+- 70-89%：估值信号良好，存在少量数据缺口
+- 50-69%：确定性中等，部分方法受限
+- 30-49%：数据有限或信号矛盾
+- 10-29%：数据质量差或估值不可靠
 
-Use the analyze_signal function to return your analysis."""
+请使用 analyze_signal 函数返回你的分析。"""
 
 
 class ValuationAgent(BaseAgent):
@@ -139,9 +139,7 @@ class ValuationAgent(BaseAgent):
             "loss_making": "亏损型",
             "default": "默认型",
         }
-        stock_type_name = type_names.get(
-            str(stock_type).lower() if stock_type else "default", "默认型"
-        )
+        stock_type_name = type_names.get(str(stock_type).lower() if stock_type else "default", "默认型")
 
         # Build valuation methods info
         methods_info = []
@@ -271,6 +269,11 @@ class ValuationAgent(BaseAgent):
         self._logger.debug(f"[{stock_code}] ValuationAgent starting analysis")
 
         valuation_data = context.get("valuation_data", {})
+
+        # Merge industry from context into valuation_data if missing
+        if not valuation_data.get("industry_name") and context.get("industry"):
+            valuation_data["industry_name"] = context["industry"]
+            self._logger.debug(f"[{stock_code}] 从context补充行业信息: {context['industry']}")
 
         if not valuation_data or current_price <= 0:
             return AgentSignal(

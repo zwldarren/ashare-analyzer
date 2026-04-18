@@ -120,4 +120,5 @@ class TestPortfolioService:
         assert positions[0].current_price == 1850.0
         assert positions[0].market_value == 185000.0
         assert positions[0].profit_loss == 5000.0
-        assert abs(positions[0].profit_loss_pct - 2.78) < 0.01  # type: ignore[operator]
+        assert positions[0].profit_loss_pct is not None
+        assert abs(positions[0].profit_loss_pct - 2.78) < 0.01

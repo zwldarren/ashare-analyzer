@@ -165,7 +165,11 @@ class ConsoleRenderer(ReportRenderer):
 
         for stock in report.stocks:
             emoji = get_signal_emoji(stock.action)
-            position = f"{stock.position_ratio * 100:.0f}%" if stock.position_ratio > 0 else "-"
+            position = (
+                f"{stock.position_ratio * 100:.0f}%"
+                if stock.position_ratio > 0
+                else (f"{stock.position_quantity}股" if stock.has_position else "-")
+            )
             trend = stock.trend_prediction or "-"
             action_style = {"BUY": "green", "SELL": "red", "HOLD": "yellow"}.get(stock.action.upper(), "white")
 

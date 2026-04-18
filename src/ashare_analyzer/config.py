@@ -149,8 +149,10 @@ def _serialize_toml_value(value: Any, env_var: str) -> str:
     return str(value)
 
 
-def _get_nested_value(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
+def _get_nested_value(data: dict[str, Any] | None, keys: tuple[str, ...]) -> Any:
     """Navigate nested dict using tuple of keys."""
+    if data is None:
+        return None
     current: Any = data
     for key in keys:
         if not isinstance(current, dict):
@@ -409,6 +411,7 @@ class PortfolioConfig(BaseSettings):
     model_config = _COMMON_CONFIG
 
     positions: dict[str, PositionConfig] = Field(default_factory=dict)
+    available_cash: float = Field(default=0.0, ge=0.0)
 
 
 # ==========================================
@@ -579,8 +582,9 @@ def _load_config_base() -> Config:
             for code, pos_data in portfolio_section.items()
             if isinstance(pos_data, dict) and "quantity" in pos_data and "cost_price" in pos_data
         }
-        if positions:
-            config.portfolio = PortfolioConfig(positions=positions)
+        available_cash = portfolio_section.get("available_cash", 0.0)
+        if positions or available_cash > 0:
+            config.portfolio = PortfolioConfig(positions=positions, available_cash=available_cash)
 
     return config
 

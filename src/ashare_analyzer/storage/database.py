@@ -233,8 +233,8 @@ class DatabaseManager:
                     if existing:
                         for field in fields:
                             setattr(existing, field, row.get(field))
-                        existing.data_source = data_source
-                        existing.updated_at = datetime.now()
+                        existing.data_source = data_source  # ty:ignore[invalid-assignment]
+                        existing.updated_at = datetime.now()  # ty:ignore[invalid-assignment]
                     else:
                         record = StockDaily(
                             code=code,
@@ -325,8 +325,8 @@ class DatabaseManager:
                 if existing:
                     for field in fields:
                         setattr(existing, field, chip_data.get(field, 0.0))
-                    existing.data_source = data_source
-                    existing.updated_at = datetime.now()
+                    existing.data_source = data_source  # ty:ignore[invalid-assignment]
+                    existing.updated_at = datetime.now()  # ty:ignore[invalid-assignment]
                     logger.debug(f"更新 {code} 筹码数据: {chip_date}")
                 else:
                     record = ChipData(
@@ -393,34 +393,34 @@ class DatabaseManager:
                     existing = session.execute(select(NewsIntel).where(NewsIntel.url == url_key)).scalar_one_or_none()
 
                     if existing:
-                        existing.name = name or existing.name
-                        existing.dimension = dimension or existing.dimension
-                        existing.query = query or existing.query
-                        existing.provider = response.provider or existing.provider
-                        existing.snippet = snippet or existing.snippet
-                        existing.source = source or existing.source
-                        existing.published_date = published_date or existing.published_date
-                        existing.fetched_at = datetime.now()
+                        existing.name = name or existing.name  # ty:ignore[invalid-assignment]
+                        existing.dimension = dimension or existing.dimension  # ty:ignore[invalid-assignment]
+                        existing.query = query or existing.query  # ty:ignore[invalid-assignment]
+                        existing.provider = response.provider or existing.provider  # ty:ignore[invalid-assignment]
+                        existing.snippet = snippet or existing.snippet  # ty:ignore[invalid-assignment]
+                        existing.source = source or existing.source  # ty:ignore[invalid-assignment]
+                        existing.published_date = published_date or existing.published_date  # ty:ignore[invalid-assignment]
+                        existing.fetched_at = datetime.now()  # ty:ignore[invalid-assignment]
 
                         if query_context:
-                            existing.query_id = query_context.get("query_id") or existing.query_id
-                            existing.query_source = query_context.get("query_source") or existing.query_source
-                            existing.requester_platform = (
+                            existing.query_id = query_context.get("query_id") or existing.query_id  # ty:ignore[invalid-assignment]
+                            existing.query_source = query_context.get("query_source") or existing.query_source  # ty:ignore[invalid-assignment]
+                            existing.requester_platform = (  # ty:ignore[invalid-assignment]
                                 query_context.get("requester_platform") or existing.requester_platform
                             )
-                            existing.requester_user_id = (
+                            existing.requester_user_id = (  # ty:ignore[invalid-assignment]
                                 query_context.get("requester_user_id") or existing.requester_user_id
                             )
-                            existing.requester_user_name = (
+                            existing.requester_user_name = (  # ty:ignore[invalid-assignment]
                                 query_context.get("requester_user_name") or existing.requester_user_name
                             )
-                            existing.requester_chat_id = (
+                            existing.requester_chat_id = (  # ty:ignore[invalid-assignment]
                                 query_context.get("requester_chat_id") or existing.requester_chat_id
                             )
-                            existing.requester_message_id = (
+                            existing.requester_message_id = (  # ty:ignore[invalid-assignment]
                                 query_context.get("requester_message_id") or existing.requester_message_id
                             )
-                            existing.requester_query = query_context.get("requester_query") or existing.requester_query
+                            existing.requester_query = query_context.get("requester_query") or existing.requester_query  # ty:ignore[invalid-assignment]
                     else:
                         try:
                             with session.begin_nested():

@@ -112,8 +112,9 @@ class LiteLLMClient:
 
     def _get_models_to_try(self) -> list[tuple[str, str | None, str | None]]:
         """Return list of (model, api_key, base_url) tuples to try."""
-        models = [(self.model, self.api_key, self.base_url)]
+        models: list[tuple[str, str | None, str | None]] = [(self.model, self.api_key, self.base_url)]
         if self.has_fallback():
+            assert self.fallback_model is not None
             models.append((self.fallback_model, self.fallback_api_key, self.fallback_base_url))
         return models
 
@@ -244,6 +245,7 @@ class LiteLLMClient:
         )
 
         last_error: Exception | None = None
+        empty_args_count = 0
         for model_idx, (model, api_key, base_url) in enumerate(self._get_models_to_try()):
             model_name = model or "unknown"
             if model_idx > 0:
@@ -287,6 +289,17 @@ class LiteLLMClient:
                                 )
                                 last_error = Exception(f"Function call returned non-dict: {type(result).__name__}")
                                 continue
+                            if not result:
+                                empty_args_count += 1
+                                logger.warning(
+                                    f"[{model_name}] Function call returned empty arguments"
+                                    f" (attempt {attempt + 1}/{max_retries}, consecutive: {empty_args_count})"
+                                )
+                                last_error = Exception("Function call returned empty arguments")
+                                if empty_args_count >= 2:
+                                    logger.warning(f"[{model_name}] 模型连续返回空参数，停止重试")
+                                    break
+                                continue
                             if model_idx > 0:
                                 logger.info(f"[{model_name}] 备用模型 Function call 成功")
 
@@ -300,7 +313,10 @@ class LiteLLMClient:
                             )
                             return result
                         if choice.message.content:
-                            logger.warning(f"[{model_name}] No tool calls, got text: {choice.message.content[:200]}...")
+                            logger.warning(
+                                f"[{model_name}] No tool calls, text response (attempt {attempt + 1}/{max_retries}):"
+                            )
+                            logger.warning(f"[{model_name}] Text content:\n{choice.message.content}")
                             # 记录返回文本而非 tool calls 的情况
                             log_llm_response(
                                 agent_name=agent_name,
@@ -308,6 +324,16 @@ class LiteLLMClient:
                                 response=response,
                                 parsed_result=None,
                                 duration_ms=duration_ms,
+                            )
+                            log_llm_error(
+                                agent_name,
+                                model_name,
+                                Exception("No tool calls in response"),
+                                {
+                                    "attempt": attempt + 1,
+                                    "max_retries": max_retries,
+                                    "content_preview": choice.message.content[:500],
+                                },
                             )
 
                     last_error = Exception("No tool calls in response")

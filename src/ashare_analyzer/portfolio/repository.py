@@ -74,9 +74,9 @@ class PortfolioRepository:
                 ).scalar_one_or_none()
 
                 if existing:
-                    existing.quantity = quantity
-                    existing.cost_price = cost_price
-                    existing.updated_at = datetime.now()
+                    existing.quantity = quantity  # ty:ignore[invalid-assignment]
+                    existing.cost_price = cost_price  # ty:ignore[invalid-assignment]
+                    existing.updated_at = datetime.now()  # ty:ignore[invalid-assignment]
                     logger.debug(f"Updated position: {code} qty={quantity} cost={cost_price}")
                 else:
                     position = PortfolioState(
@@ -185,8 +185,8 @@ class TradeHistoryRepository:
                 session.commit()
 
                 logger.debug(f"Saved trade: {action} {quantity} {code} @ {price}")
-                # Type ignore: SQLAlchemy column type not recognized by ty
-                return trade.id  # type: ignore[return-value]
+                # SQLAlchemy column type not recognized by ty
+                return trade.id  # ty:ignore[invalid-return-type]
 
         except SQLAlchemyError as e:
             logger.error(f"Failed to save trade for {code}: {e}")
@@ -244,10 +244,10 @@ class TradeHistoryRepository:
                 trade = session.execute(select(TradeHistory).where(TradeHistory.id == trade_id)).scalar_one_or_none()
 
                 if trade:
-                    trade.status = status
+                    trade.status = status  # ty:ignore[invalid-assignment]
                     if result_pnl is not None:
-                        trade.result_pnl = result_pnl
-                    trade.updated_at = datetime.now()
+                        trade.result_pnl = result_pnl  # ty:ignore[invalid-assignment]
+                    trade.updated_at = datetime.now()  # ty:ignore[invalid-assignment]
                     session.commit()
                     logger.debug(f"Updated trade {trade_id} status to {status}")
                     return True
